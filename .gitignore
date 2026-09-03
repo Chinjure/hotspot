@@ -1,0 +1,16 @@
+# Build outputs
+bin/
+obj/
+publish/
+publish-test/
+artifacts/
+
+# Visual Studio / Rider
+.vs/
+*.user
+*.suo
+
+# OS / editor
+.DS_Store
+Thumbs.db
+*.swp
