@@ -38,6 +38,17 @@ public partial class MainWindow : Window
         ApplyPluginSettings();
         ResultList.ItemsSource = _currentResults;
         StatusText.Text = "Type to search · Alt+Space to toggle";
+
+        // The hotkey was registered but never wired to the toggle handler,
+        // so pressing it did nothing. Subscribe once here; the subscription
+        // survives re-registration from the settings window.
+        _hotkey.HotkeyPressed += OnHotkeyPressed;
+    }
+
+    private void OnHotkeyPressed()
+    {
+        // WM_HOTKEY arrives on this window's UI thread.
+        ToggleLauncher();
     }
 
     private void ApplyPluginSettings()
@@ -73,6 +84,7 @@ public partial class MainWindow : Window
     private void Window_Closing(object? sender, System.ComponentModel.CancelEventArgs e)
     {
         _queryCts?.Cancel();
+        _hotkey.HotkeyPressed -= OnHotkeyPressed;
         _hotkey.Dispose();
         _settings.Save();
     }

@@ -95,3 +95,13 @@ PowerToys 为 MIT License（© Microsoft Corporation）。
 - 验证：`--live-search the church` → `results=72`，含
   `The Church | D:\CloudMusic\download\VipSongsDownload\The Church`，
   全部 The Church 文件（lrc/mp3/ncm/txt 等）都在结果中。
+
+## 增补 5：修复全局热键 + 不占任务栏
+
+- 问题：`HotkeyService` 已注册热键，但 `HotkeyPressed` 事件从未被订阅，
+  按下快捷键没有任何反应；且窗口显示在任务栏。
+- 修复：
+  - `MainWindow` 构造时订阅 `HotkeyPressed += OnHotkeyPressed`（关闭时退订），
+    `WM_HOTKEY` 到来即 `ToggleLauncher()` 呼出/隐藏；
+  - `ShowInTaskbar=False`：窗口不再出现在任务栏，仅保留托盘图标，靠热键/托盘找回。
+- 验证：构建通过；冒烟测试 `RUNNING pid=...`。
