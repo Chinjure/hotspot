@@ -216,8 +216,8 @@ public partial class MainWindow : Window
 
     private void ResultList_MouseLeftButtonUp(object sender, MouseButtonEventArgs e)
     {
-        // Single-click a result to open it (file → open containing folder with
-        // it selected; folder → open the folder). Enter on the keyboard works too.
+        // Single-click a result to open it (file → default app; folder → open
+        // folder). Right-click opens the context menu with 打开所在路径.
         if (e.OriginalSource is not DependencyObject source)
         {
             return;

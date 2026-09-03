@@ -230,8 +230,16 @@ public sealed class FileSearchPlugin : IPlugin
                         ClipboardText = path,
                         Execute = () =>
                         {
-                            var args = isDirectory ? $"\"{path}\"" : $"/select,\"{path}\"";
-                            Process.Start(new ProcessStartInfo("explorer.exe", args) { UseShellExecute = true });
+                            // 左键 = 打开文件（默认程序）；文件夹直接打开。
+                            if (isDirectory)
+                            {
+                                Process.Start(new ProcessStartInfo("explorer.exe", $"\"{path}\"") { UseShellExecute = true });
+                            }
+                            else
+                            {
+                                Process.Start(new ProcessStartInfo(path) { UseShellExecute = true });
+                            }
+
                             return Task.CompletedTask;
                         },
                     });
@@ -331,8 +339,16 @@ public sealed class FileSearchPlugin : IPlugin
             ClipboardText = path,
             Execute = () =>
             {
-                var args = hit.IsDirectory ? $"\"{path}\"" : $"/select,\"{path}\"";
-                Process.Start(new ProcessStartInfo("explorer.exe", args) { UseShellExecute = true });
+                // 左键 = 打开文件（默认程序）；文件夹直接打开。
+                if (hit.IsDirectory)
+                {
+                    Process.Start(new ProcessStartInfo("explorer.exe", $"\"{path}\"") { UseShellExecute = true });
+                }
+                else
+                {
+                    Process.Start(new ProcessStartInfo(path) { UseShellExecute = true });
+                }
+
                 return Task.CompletedTask;
             },
         };
@@ -369,7 +385,8 @@ public sealed class FileSearchPlugin : IPlugin
                     ClipboardText = file,
                     Execute = () =>
                     {
-                        Process.Start(new ProcessStartInfo("explorer.exe", $"/select,\"{file}\"") { UseShellExecute = true });
+                        // 左键 = 打开文件（默认程序）。
+                        Process.Start(new ProcessStartInfo(file) { UseShellExecute = true });
                         return Task.CompletedTask;
                     },
                 });

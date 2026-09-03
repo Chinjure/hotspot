@@ -116,3 +116,12 @@ PowerToys 为 MIT License（© Microsoft Corporation）。
     保留设置/历史/NTFS 索引，迁移失败则继续用旧目录）。
 - 图标：程序内置手绘放大镜 ICO（紫色镜环 + 手柄，透明背景，16/32/48/256 四档尺寸），
   用于 exe 图标与托盘图标（`Assets/hotspot.ico`）。
+
+
+## 增补 7：左键打开文件 / 右键打开所在路径
+
+- 需求：左键点击结果应直接打开文件，而不是打开所在路径。
+- 实现：`FileSearchPlugin` 的结果 Execute 改为——文件用默认程序打开
+  （`Process.Start(path, UseShellExecute)`），文件夹直接打开；
+  右键菜单保持「打开文件 / 打开所在路径 / 复制完整路径」，`打开所在路径`
+  在资源管理器中定位文件（`explorer /select`）。
