@@ -1,5 +1,8 @@
+using System.Diagnostics;
+using System.IO;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Controls.Primitives;
 using System.Windows.Input;
 using KeyEventArgs = System.Windows.Input.KeyEventArgs;
 using PowerToysRunStandalone.Infrastructure;
@@ -214,6 +217,109 @@ public partial class MainWindow : Window
 
         e.Handled = true;
         _ = ExecuteItemAsync(item);
+    }
+
+    private void ResultList_PreviewMouseRightButtonUp(object sender, MouseButtonEventArgs e)
+    {
+        if (e.OriginalSource is not DependencyObject source)
+        {
+            return;
+        }
+
+        if (ItemsControl.ContainerFromElement(ResultList, source) is not ListBoxItem { DataContext: ResultItem item })
+        {
+            return;
+        }
+
+        e.Handled = true;
+        ResultList.SelectedItem = item;
+
+        var path = item.ClipboardText;
+        var hasPath = !string.IsNullOrEmpty(path) && (File.Exists(path) || Directory.Exists(path));
+
+        var menu = new ContextMenu();
+        var openFile = new MenuItem { Header = "打开文件", IsEnabled = hasPath && File.Exists(path) };
+        openFile.Click += (_, _) => OpenDirectly(item);
+        var openFolder = new MenuItem { Header = "打开所在路径", IsEnabled = hasPath };
+        openFolder.Click += (_, _) => OpenContainingPath(item);
+        var copyPath = new MenuItem { Header = "复制完整路径", IsEnabled = hasPath };
+        copyPath.Click += (_, _) => CopyPath(item);
+        menu.Items.Add(openFile);
+        menu.Items.Add(openFolder);
+        menu.Items.Add(new Separator());
+        menu.Items.Add(copyPath);
+
+        menu.Placement = PlacementMode.MousePoint;
+        menu.IsOpen = true;
+    }
+
+    private static void OpenDirectly(ResultItem item)
+    {
+        var path = item.ClipboardText;
+        if (string.IsNullOrEmpty(path))
+        {
+            return;
+        }
+
+        try
+        {
+            if (Directory.Exists(path))
+            {
+                Process.Start(new ProcessStartInfo("explorer.exe", $"\"{path}\"") { UseShellExecute = true });
+            }
+            else if (File.Exists(path))
+            {
+                Process.Start(new ProcessStartInfo(path) { UseShellExecute = true });
+            }
+        }
+        catch
+        {
+            // ignore
+        }
+    }
+
+    private static void OpenContainingPath(ResultItem item)
+    {
+        var path = item.ClipboardText;
+        if (string.IsNullOrEmpty(path))
+        {
+            return;
+        }
+
+        try
+        {
+            if (Directory.Exists(path))
+            {
+                Process.Start(new ProcessStartInfo("explorer.exe", $"\"{path}\"") { UseShellExecute = true });
+            }
+            else if (File.Exists(path))
+            {
+                Process.Start(new ProcessStartInfo("explorer.exe", $"/select,\"{path}\"") { UseShellExecute = true });
+            }
+        }
+        catch
+        {
+            // ignore
+        }
+    }
+
+    private void CopyPath(ResultItem item)
+    {
+        var path = item.ClipboardText;
+        if (string.IsNullOrEmpty(path))
+        {
+            return;
+        }
+
+        try
+        {
+            Clipboard.SetText(path);
+            StatusText.Text = "完整路径已复制到剪贴板";
+        }
+        catch
+        {
+            // Clipboard may be locked by another process.
+        }
     }
 
     private void MoveSelection(int delta)

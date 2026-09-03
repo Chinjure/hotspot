@@ -75,6 +75,7 @@
                          ScrollViewer.VerticalScrollBarVisibility="Auto"
                          PreviewMouseDown="ResultList_PreviewMouseDown"
                          MouseLeftButtonUp="ResultList_MouseLeftButtonUp"
+                         PreviewMouseRightButtonUp="ResultList_PreviewMouseRightButtonUp"
                          KeyDown="ResultList_KeyDown">
                     <ListBox.ItemTemplate>
                         <DataTemplate>
