@@ -3,7 +3,7 @@ $ErrorActionPreference = "Stop"
 Add-Type -AssemblyName System.Drawing
 Add-Type -AssemblyName System.Windows.Forms
 
-$exe = "C:\Users\Mayn\Desktop\hotspot\PowerToysRunStandalone\publish\PowerToysRunStandalone.exe"
+$exe = "C:\Users\Mayn\Desktop\hotspot\PowerToysRunStandalone\publish\hotspot.exe"
 $out = "C:\Users\Mayn\Desktop\hotspot\PowerToysRunStandalone\artifacts\settings-window.png"
 
 if (!(Test-Path $exe)) { throw "EXE not found: $exe" }

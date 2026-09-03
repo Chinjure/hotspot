@@ -1,4 +1,4 @@
-# Delivery Evidence Manifest — PowerToys Run Standalone
+# Delivery Evidence Manifest — hotspot
 
 - 任务：阅读 microsoft/PowerToys 源码，提取 PowerToys Run 功能，制成独立 Windows EXE。
 - 范围（与用户确认）：全部内置插件 + 简易设置窗口。
@@ -8,7 +8,7 @@
 
 | 项目 | 路径 | 说明 |
 | --- | --- | --- |
-| 单文件 EXE | `publish/PowerToysRunStandalone.exe` | 72,226,564 bytes，`PE32+ executable (GUI) x86-64`，单文件、自包含 .NET 8；SHA256 `d06da742bcf1418d0d4817e84d06085e409a140b2379cb227baf32c70007732e` |
+| 单文件 EXE | `publish/hotspot.exe` | 72,293,027 bytes，`PE32+ executable (GUI) x86-64`，单文件、自包含 .NET 8；SHA256 `8be41696b5554e581cbc47793b5ac66e170983c76d965033b0a3b02164628f35` |
 | 源码 | `src/PowerToysRunStandalone/` | WPF 宿主 + 22 个内置/社区插件 + 设置窗口 |
 | 构建脚本 | `build/build.ps1` / `build/build.sh` | dotnet publish win-x64 single-file |
 | 说明文档 | `README.md` / `LICENSE` / `NOTICE.md` | 功能、构建、版权与来源 |
@@ -19,7 +19,7 @@
 - 工具：Windows PowerShell + .NET SDK 8.0.424（用户级安装于 `C:\Users\Mayn\.dotnet`）。
 - 命令：
   `dotnet publish src\PowerToysRunStandalone\PowerToysRunStandalone.csproj -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -p:EnableCompressionInSingleFile=true -p:DebugType=embedded -o publish`
-- 结果：`PowerToysRunStandalone -> ...\publish\`，退出码 0。
+- 结果：`hotspot -> ...\publish\`，退出码 0。
 
 ## 运行冒烟
 
@@ -52,7 +52,7 @@ PowerToys 为 MIT License（© Microsoft Corporation）。
 - 需求：原文件搜索只遍历桌面/文档等常用目录，很多文件搜不到。
 - 实现：按 `C:\Users\Mayn\Desktop\undex` 的查询原理重写 `FileSearchPlugin`——
   直接重建 NTFS MFT 记录（`$MFT` 优先、SeBackupPrivilege，普通权限自动并行 walk 回退），
-  索引持久化到 `%LocalAppData%\PowerToysRunStandalone\ntfs\`，管理员时经 USN Journal
+  索引持久化到 `%LocalAppData%\hotspot\ntfs\`，管理员时经 USN Journal
   增量更新，查询时 delta overlay 合并。
 - 新增源码：`src/PowerToysRunStandalone/Infrastructure/Ntfs/`（NativeMethods /
   NtfsScanner / NtfsIndexWriter / NtfsIndex / UsnUpdater / NtfsIndexService 共 6 个文件）。
@@ -69,7 +69,7 @@ PowerToys 为 MIT License（© Microsoft Corporation）。
     左键/“显示启动器”找回窗口，“设置”打开设置，“退出”真正退出；关闭按钮改为隐藏到托盘。
   - `NtfsIndexService.Search` 按“每盘公平配额”查询（每盘 ≈ max/盘数），
     保证 D: 结果不会被 C: 全部挤掉。
-- 验证：启动后 `MainWindowTitle=PowerToys Run Standalone`（任务栏可见）；
+- 验证：启动后 `MainWindowTitle=hotspot`（任务栏可见）；
   `--index-search 图吧工具箱` 命中 `D:\图吧工具箱202507\图吧工具箱2025.exe`。
 
 ## 增补 3：索引外实时搜索
@@ -105,3 +105,14 @@ PowerToys 为 MIT License（© Microsoft Corporation）。
     `WM_HOTKEY` 到来即 `ToggleLauncher()` 呼出/隐藏；
   - `ShowInTaskbar=False`：窗口不再出现在任务栏，仅保留托盘图标，靠热键/托盘找回。
 - 验证：构建通过；冒烟测试 `RUNNING pid=...`。
+
+
+## 增补 6：更名为 hotspot + 放大镜图标
+
+- 应用名由「PowerToys Run Standalone」更名为 **hotspot**：
+  - 产物改为 `publish/hotspot.exe`（AssemblyName=hotspot）；
+  - 窗口标题、设置窗口标题、托盘提示均显示 hotspot；
+  - 数据目录迁移到 `%LocalAppData%\hotspot\`（旧 `PowerToysRunStandalone` 目录首次启动自动迁移，
+    保留设置/历史/NTFS 索引，迁移失败则继续用旧目录）。
+- 图标：程序内置手绘放大镜 ICO（紫色镜环 + 手柄，透明背景，16/32/48/256 四档尺寸），
+  用于 exe 图标与托盘图标（`Assets/hotspot.ico`）。

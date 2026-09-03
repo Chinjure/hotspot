@@ -18,7 +18,7 @@ public sealed class HistoryService
 
     public HistoryService()
     {
-        _directory = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "PowerToysRunStandalone");
+        _directory = AppPaths.DataDir;
         _path = Path.Combine(_directory, "history.json");
         Entries = Load();
     }

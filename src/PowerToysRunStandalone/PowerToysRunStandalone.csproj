@@ -10,16 +10,17 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <LangVersion>latest</LangVersion>
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
-    <AssemblyName>PowerToysRunStandalone</AssemblyName>
+    <AssemblyName>hotspot</AssemblyName>
     <RootNamespace>PowerToysRunStandalone</RootNamespace>
+    <ApplicationIcon>Assets\hotspot.ico</ApplicationIcon>
     <ApplicationManifest>app.manifest</ApplicationManifest>
     <EnableWindowsTargeting>true</EnableWindowsTargeting>
     <SupportedOSPlatformVersion>10.0.17763.0</SupportedOSPlatformVersion>
     <Version>1.0.0</Version>
     <AssemblyVersion>1.0.0.0</AssemblyVersion>
     <FileVersion>1.0.0.0</FileVersion>
-    <Authors>Extracted from microsoft/PowerToys (MIT)</Authors>
-    <Description>Standalone PowerToys Run-like launcher extracted from microsoft/PowerToys source.</Description>
+    <Authors>hotspot (extracted from microsoft/PowerToys, MIT)</Authors>
+    <Description>hotspot — Everything 式 NTFS 全盘文件搜索启动器</Description>
     <RepositoryUrl>https://github.com/microsoft/PowerToys</RepositoryUrl>
     <InvariantGlobalization>false</InvariantGlobalization>
     <SatelliteResourceLanguages>en</SatelliteResourceLanguages>
@@ -40,6 +41,8 @@
 
   <ItemGroup>
     <None Include="app.manifest" />
+    <Resource Include="Assets\hotspot.ico" />
+    <Resource Include="Assets\hotspot.png" />
   </ItemGroup>
 
   <!-- UseWindowsForms adds implicit global usings that clash with WPF names

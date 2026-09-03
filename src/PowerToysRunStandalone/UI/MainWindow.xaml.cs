@@ -34,6 +34,7 @@ public partial class MainWindow : Window
         _plugins = plugins;
 
         InitializeComponent();
+        Icon = AppIcon.LoadWindowIcon();
 
         ApplyPluginSettings();
         ResultList.ItemsSource = _currentResults;

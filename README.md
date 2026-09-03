@@ -1,4 +1,6 @@
-# PowerToys Run Standalone
+# hotspot
+
+> 原 PowerToys Run Standalone 已更名为 **hotspot**（Everything 式 NTFS 全盘文件搜索启动器）
 
 从 [microsoft/PowerToys](https://github.com/microsoft/PowerToys)（MIT License）的
 PowerToys Run（Launcher）功能中提取、独立化的快速启动器。
@@ -23,8 +25,8 @@ PowerToys Run（Launcher）功能中提取、独立化的快速启动器。
 - 结果可复制到剪贴板（计算器、时间、环境变量等）
 - 近期使用历史（History 插件）
 - 简易设置窗口：热键、开机自启、搜索引擎、插件启停
-- 配置：`%LocalAppData%\PowerToysRunStandalone\settings.json`
-- 历史：`%LocalAppData%\PowerToysRunStandalone\history.json`
+- 配置：`%LocalAppData%\hotspot\settings.json`
+- 历史：`%LocalAppData%\hotspot\history.json`
 
 ## 内置插件
 
@@ -74,7 +76,7 @@ PowerToys Run（Launcher）功能中提取、独立化的快速启动器。
 产物：
 
 ```
-publish/PowerToysRunStandalone.exe   # 单文件、自包含 win-x64
+publish/hotspot.exe   # 单文件、自包含 win-x64
 ```
 
 也可以手动执行：
@@ -98,7 +100,7 @@ NTFS 记录索引（与 [undex](../undex/) 的查询原理一致）：
    判定普通文件），通过父引用链重建完整路径——覆盖卷上全部文件与目录。
 2. **walk 回退**：Win11 24H2+ 管理员保护或普通权限打不开 `$MFT` 时，自动
    降级为并行目录递归（记录每条目的 NTFS FileId），无管理员也能完整建索引。
-3. **持久索引**：索引存于 `%LocalAppData%\PowerToysRunStandalone\ntfs\`
+3. **持久索引**：索引存于 `%LocalAppData%\hotspot\ntfs\`
    （`C-meta.json` / `C-index.dat` / `C-delta.json`），首次启动后台构建，
    之后启动直接内存映射加载，搜索为全盘毫秒级。
 4. **USN 增量**：以管理员运行时读取 `FSCTL_READ_USN_JOURNAL` 追加增量
@@ -118,7 +120,7 @@ NTFS 记录索引（与 [undex](../undex/) 的查询原理一致）：
 ## 源码结构
 
 ```
-PowerToysRunStandalone/
+hotspot/
 ├── src/PowerToysRunStandalone/
 │   ├── App.xaml(.cs)              # 启动/装配（对应 PowerLauncher App）
 │   ├── Infrastructure/

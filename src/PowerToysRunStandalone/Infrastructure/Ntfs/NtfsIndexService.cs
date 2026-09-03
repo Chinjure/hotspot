@@ -59,8 +59,7 @@ public sealed class NtfsIndexService : IDisposable
 
     public NtfsIndexService()
     {
-        var appData = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
-        _indexDirectory = Path.Combine(appData, "PowerToysRunStandalone", "ntfs");
+        _indexDirectory = Path.Combine(AppPaths.DataDir, "ntfs");
         Directory.CreateDirectory(_indexDirectory);
         CleanupTemporaryFiles();
     }

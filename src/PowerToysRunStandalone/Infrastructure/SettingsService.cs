@@ -63,7 +63,7 @@ public sealed class SettingsService
 
     public SettingsService()
     {
-        _directory = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "PowerToysRunStandalone");
+        _directory = AppPaths.DataDir;
         _path = Path.Combine(_directory, "settings.json");
         Current = Load();
     }

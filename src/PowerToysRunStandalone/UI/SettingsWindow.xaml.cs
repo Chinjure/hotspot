@@ -19,6 +19,7 @@ public partial class SettingsWindow : Window
     public SettingsWindow(SettingsService settings, PluginManager plugins, NtfsIndexService ntfs)
     {
         InitializeComponent();
+        Icon = AppIcon.LoadWindowIcon();
 
         _settings = settings;
         _plugins = plugins;

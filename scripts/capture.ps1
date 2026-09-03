@@ -15,7 +15,7 @@ public static class Win32Capture {
 }
 "@
 
-$exe = "C:\Users\Mayn\Desktop\hotspot\PowerToysRunStandalone\publish\PowerToysRunStandalone.exe"
+$exe = "C:\Users\Mayn\Desktop\hotspot\PowerToysRunStandalone\publish\hotspot.exe"
 $out = "C:\Users\Mayn\Desktop\hotspot\PowerToysRunStandalone\artifacts\launcher-window.png"
 
 if (!(Test-Path $exe)) { throw "EXE not found: $exe" }

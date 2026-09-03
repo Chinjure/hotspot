@@ -26,8 +26,8 @@ public sealed class TrayIconService : IDisposable
 
         _notifyIcon = new NotifyIcon
         {
-            Icon = SystemIcons.Application,
-            Text = "PowerToys Run Standalone — 左键显示 · 右键菜单",
+            Icon = LoadAppIcon(),
+            Text = "hotspot — 左键显示 · 右键菜单",
             Visible = true,
             ContextMenuStrip = menu,
         };
@@ -45,5 +45,25 @@ public sealed class TrayIconService : IDisposable
     {
         _notifyIcon.Visible = false;
         _notifyIcon.Dispose();
+    }
+
+    private static Icon LoadAppIcon()
+    {
+        try
+        {
+            var uri = new Uri("pack://application:,,,/Assets/hotspot.ico");
+            var resource = System.Windows.Application.GetResourceStream(uri);
+            if (resource is not null)
+            {
+                using var stream = resource.Stream;
+                return new Icon(stream);
+            }
+        }
+        catch
+        {
+            // fall through to the generic system icon
+        }
+
+        return SystemIcons.Application;
     }
 }

@@ -1,7 +1,7 @@
 # Quick smoke test: start the published exe, wait a few seconds, verify it is
 # still alive, then stop it.
 $ErrorActionPreference = "Stop"
-$exe = "C:\Users\Mayn\Desktop\hotspot\PowerToysRunStandalone\publish\PowerToysRunStandalone.exe"
+$exe = "C:\Users\Mayn\Desktop\hotspot\PowerToysRunStandalone\publish\hotspot.exe"
 
 if (!(Test-Path $exe)) {
     throw "EXE not found: $exe"
