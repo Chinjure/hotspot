@@ -1,5 +1,5 @@
 # Build outputs
-cpp/build/
+build/
 publish/
 publish-test/
 

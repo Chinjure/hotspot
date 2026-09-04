@@ -10,14 +10,13 @@
 在 Windows PowerShell 中：
 
 ```powershell
-cd PowerToysRunStandalone\cpp
 .\build.ps1
 ```
 
 产物：
 
 ```
-PowerToysRunStandalone\publish\hotspot-cpp.exe   # 原生 PE32+ GUI x64
+publish\hotspot-cpp.exe   # 原生 PE32+ GUI x64
 ```
 
 要求：已安装 Visual Studio 的“使用 C++ 的桌面开发”工作负载（MSVC x64 + Windows SDK）。
@@ -55,7 +54,7 @@ hotspot-cpp.exe --stay           # GUI：保持窗口（截图/调试用，不�
 ## 源码结构
 
 ```
-cpp/
+hotspot/
 ├── build.ps1
 ├── README.md
 └── src/

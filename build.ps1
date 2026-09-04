@@ -5,7 +5,7 @@ param(
 
 $ErrorActionPreference = "Stop"
 $scriptRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
-$repoRoot = Split-Path -Parent $scriptRoot
+$repoRoot = $scriptRoot
 $srcDir = Join-Path $scriptRoot "src"
 $buildDir = Join-Path $scriptRoot "build"
 $outDir = Join-Path $repoRoot $Output
@@ -64,7 +64,7 @@ $linkLine = "link.exe /nologo /SUBSYSTEM:WINDOWS /OUT:`"$outDir\hotspot-cpp.exe`
 $lines.Add($linkLine)
 $lines.Add("exit /b %errorlevel%")
 
-# ASCII is safe for this repository path (C:\Users\Mayn\Desktop\hotspot\...).
+# ASCII is safe for this repository path.
 [System.IO.File]::WriteAllText($cmdFile, ($lines -join "`r`n"), [System.Text.Encoding]::ASCII)
 
 Write-Host "==> hotspot-cpp.exe (MSVC x64 via PowerShell)" -ForegroundColor Cyan
