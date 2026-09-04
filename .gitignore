@@ -1,0 +1,11 @@
+# Build outputs
+cpp/build/
+publish/
+publish-test/
+
+# Visual Studio / editor
+.vs/
+*.user
+*.suo
+Thumbs.db
+.DS_Store
