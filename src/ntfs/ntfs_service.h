@@ -9,6 +9,7 @@
 
 #include "ntfs_index.h"
 #include "ntfs_types.h"
+#include "path_query.h"
 
 struct NtfsDriveState {
     wchar_t drive = 0;
@@ -43,8 +44,11 @@ public:
 
     std::vector<NtfsDriveState> driveStates();
     NtfsServiceStatus status();
+    // Name search when `pathQuery` is null, path search otherwise (the query's
+    // segments are matched against every volume's reconstructed paths).
     std::vector<NtfsSearchResult> search(const std::wstring& needle, int maxResults,
-                                         const std::atomic<bool>* cancel = nullptr);
+                                         const std::atomic<bool>* cancel = nullptr,
+                                         const path_query::Query* pathQuery = nullptr);
 
     std::wstring indexDirectory() const { return indexDirectory_; }
     void dispose();

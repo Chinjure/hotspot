@@ -9,3 +9,4 @@ publish-test/
 *.suo
 Thumbs.db
 .DS_Store
+verify/out/

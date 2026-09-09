@@ -34,6 +34,17 @@ bool startsWithIgnoreCase(const std::wstring& text, const std::wstring& prefix);
 bool containsIgnoreCase(const std::wstring& text, const std::wstring& needle);
 bool lessIgnoreCase(const std::wstring& a, const std::wstring& b);
 
+// Invariant-locale lowercase folding of one UTF-16 code unit, plus an
+// allocation-free case-insensitive "contains" that expects an already folded
+// needle. Shared by the NTFS index scan and the path-search matcher so every
+// search path folds exactly the same way.
+wchar_t foldChar(wchar_t c);
+std::wstring foldString(const std::wstring& text);
+bool containsFolded(const wchar_t* hay, size_t hayLen, const wchar_t* folded, size_t foldedLen);
+inline bool containsFolded(const std::wstring& hay, const std::wstring& folded) {
+    return containsFolded(hay.data(), hay.size(), folded.data(), folded.size());
+}
+
 // Human readable Win32 error message.
 std::wstring lastErrorText(DWORD code = ::GetLastError());
 

@@ -4,6 +4,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cwctype>
 #include <iterator>
 #include <thread>
 
@@ -360,16 +361,51 @@ NtfsServiceStatus NtfsService::status() {
 }
 
 std::vector<NtfsSearchResult> NtfsService::search(const std::wstring& needle, int maxResults,
-                                                  const std::atomic<bool>* cancel) {
+                                                  const std::atomic<bool>* cancel,
+                                                  const path_query::Query* pathQuery) {
     std::vector<NtfsSearchResult> results;
     std::lock_guard<std::mutex> lock(gate_);
     if (indexes_.empty()) return results;
 
-    int perDrive = std::max(1, static_cast<int>(std::ceil(static_cast<double>(maxResults) / indexes_.size())));
+    // An absolute path query can only hit its own volume: skip the other
+    // indexes and spend the whole budget on the drive it names.
+    wchar_t onlyDrive = 0;
+    if (pathQuery && pathQuery->valid && pathQuery->absolute && !pathQuery->segments.empty() &&
+        pathQuery->segments[0].size() == 2) {
+        onlyDrive = static_cast<wchar_t>(towupper(pathQuery->segments[0][0]));
+    }
+
+    size_t driveCount = 0;
+    for (const auto& [d, index] : indexes_) {
+        if (onlyDrive && static_cast<wchar_t>(towupper(d)) != onlyDrive) continue;
+        driveCount++;
+    }
+    if (driveCount == 0) return results;
+
+    int perDrive = std::max(1, static_cast<int>(std::ceil(static_cast<double>(maxResults) / driveCount)));
     for (auto& [d, index] : indexes_) {
         if (cancel && cancel->load()) break;
-        auto found = index->search(needle, perDrive, cancel);
+        if (onlyDrive && static_cast<wchar_t>(towupper(d)) != onlyDrive) continue;
+        auto found = index->search(needle, perDrive, cancel, pathQuery);
         results.insert(results.end(), std::make_move_iterator(found.begin()), std::make_move_iterator(found.end()));
+    }
+    // Per-drive results are already ranked internally, but the concatenation is
+    // not: re-rank the merged set before cutting it to maxResults so a drive's
+    // low-quality tail can never push a better hit from another drive out.
+    if (results.size() > 1) {
+        bool pathMode = pathQuery != nullptr && pathQuery->valid;
+        std::sort(results.begin(), results.end(),
+                  [&needle, pathMode](const NtfsSearchResult& a, const NtfsSearchResult& b) {
+                      if (pathMode) {
+                          return file_rank::betterPathMatch(a.name, a.isDirectory, a.matchTier,
+                                                            b.name, b.isDirectory, b.matchTier);
+                      }
+                      if (a.launchable != b.launchable) return a.launchable;
+                      if (a.matchTier != b.matchTier) return a.matchTier < b.matchTier;
+                      if (a.kind != b.kind) return static_cast<int>(a.kind) < static_cast<int>(b.kind);
+                      if (a.name.size() != b.name.size()) return a.name.size() < b.name.size();
+                      return winutil::lessIgnoreCase(a.name, b.name);
+                  });
     }
     if (static_cast<int>(results.size()) > maxResults) results.resize(static_cast<size_t>(maxResults));
     return results;

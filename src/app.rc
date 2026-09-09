@@ -1,7 +1,7 @@
 #include <windows.h>
 #include "resource.h"
 
-IDI_APP ICON "..\\..\\src\\PowerToysRunStandalone\\Assets\\hotspot.ico"
+IDI_APP ICON "hotspot.ico"
 
 1 RT_MANIFEST "app.manifest"
 

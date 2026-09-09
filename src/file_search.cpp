@@ -39,19 +39,25 @@ void addResult(const std::wstring& name, const std::wstring& path, bool isDir,
     ResultItem item;
     item.title = name;
     item.subtitle = extraSubtitle.empty() ? path : path + L"　· " + extraSubtitle;
+    // Emoji fallback only; the launcher draws the real shell icon from iconPath.
     item.icon = isDir ? L"📁" : L"📄";
+    item.iconPath = path;
     item.pluginName = L"File Search";
     item.copyToClipboard = true;
     item.clipboardText = path;
     item.path = path;
     item.isDirectory = isDir;
+    item.kind = file_rank::classify(name, isDir);
+    item.launchable = file_rank::isLaunchable(item.kind);
     out.push_back(std::move(item));
 }
 
 // Recursive enumeration that skips reparse points and inaccessible dirs.
+// `onHit` receives the full path, its containing directory and the leaf name.
 // Returns true when fully done; false when time/cancellation stopped it.
 bool enumerateTree(const std::wstring& root, int maxDepth,
-                   const std::function<bool(const std::wstring& path, const std::wstring& name, bool isDir)>& onHit,
+                   const std::function<bool(const std::wstring& path, const std::wstring& parent,
+                                            const std::wstring& name, bool isDir)>& onHit,
                    const std::atomic<bool>* cancel,
                    std::chrono::steady_clock::time_point deadline) {
     struct Frame {
@@ -81,7 +87,7 @@ bool enumerateTree(const std::wstring& root, int maxDepth,
 
             bool isDir = (data.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) != 0;
             std::wstring full = frame.path + L"\\" + name;
-            if (!onHit(full, name, isDir)) {
+            if (!onHit(full, frame.path, name, isDir)) {
                 FindClose(h);
                 return true;
             }
@@ -154,13 +160,28 @@ std::vector<std::wstring> FileSearchService::searchRoots() {
     return roots;
 }
 
+std::vector<std::wstring> FileSearchService::scanRoots(const path_query::Query* pathQuery,
+                                                       bool includeAllDrives) {
+    // An absolute path query can start right next to its target instead of at
+    // every drive root; the index still covers hits outside that prefix.
+    if (pathQuery && pathQuery->absolute) {
+        std::wstring root = path_query::existingRootOf(*pathQuery);
+        if (!root.empty()) return {root};
+    }
+    return includeAllDrives ? searchRoots() : commonSearchRoots();
+}
+
 void FileSearchService::query(const std::wstring& raw, int maxResults, std::vector<ResultItem>& out,
                               const std::atomic<bool>* cancel) {
     if (raw.empty()) return;
     bool useIndexer = winutil::startsWithIgnoreCase(raw, L"?") && !winutil::startsWithIgnoreCase(raw, L"??");
     bool useFileSearch = winutil::startsWithIgnoreCase(raw, L"fs ");
+    // Typing a path is an explicit file request: it enables the plain-text
+    // pipeline even when prefix-free search is switched off.
+    bool pathCandidate = path_query::looksLikePath(raw);
     bool plainSearch = !useIndexer && !useFileSearch &&
-                       settings_.current.plainTextFileSearch && !startsWithCommandPrefix(raw);
+                       (settings_.current.plainTextFileSearch || pathCandidate) &&
+                       !startsWithCommandPrefix(raw);
     if (!useIndexer && !useFileSearch && !plainSearch) return;
 
     std::wstring search;
@@ -172,7 +193,7 @@ void FileSearchService::query(const std::wstring& raw, int maxResults, std::vect
         if (plainSearch) return;
         ResultItem hint;
         hint.title = L"Enter a file name";
-        hint.subtitle = L"Example: fs report.docx  ·  ? 2024 会议纪要  ·  直接输入文件名";
+        hint.subtitle = L"Example: fs report.docx  ·  ? 2024 会议纪要  ·  直接输入文件名  ·  输入 \\ 按路径搜索";
         hint.icon = L"📁";
         hint.pluginName = L"File Search";
         hint.closeAfterExecute = false;
@@ -180,15 +201,26 @@ void FileSearchService::query(const std::wstring& raw, int maxResults, std::vect
         return;
     }
 
+    // A separator turns the query into a path query ("C:\Users\me\Desktop",
+    // "src\components"); everything else stays a plain name search.
+    path_query::Query pathQuery;
+    const path_query::Query* pathPtr = nullptr;
+    if (path_query::looksLikePath(search)) {
+        pathQuery = path_query::parse(search);
+        if (pathQuery.valid) pathPtr = &pathQuery;
+    }
+
     int max = std::clamp(settings_.current.fileSearchMaxResults, 1, 2000);
+    if (maxResults > 0 && maxResults < max) max = maxResults; // caller's cap wins when smaller
     if (!settings_.current.ntfsIndexEnabled) {
-        legacySearch(search, max, out, cancel);
+        legacySearch(search, max, out, cancel, pathPtr);
+        rankResults(search, out, pathPtr);
         return;
     }
 
     NtfsServiceStatus status = ntfs_.status();
     std::vector<ResultItem> indexed;
-    searchIndex(search, max, indexed, cancel);
+    searchIndex(search, max, indexed, cancel, pathPtr);
 
     PathSet seen;
     for (const auto& r : indexed) seen.insert(r.path);
@@ -199,12 +231,16 @@ void FileSearchService::query(const std::wstring& raw, int maxResults, std::vect
                    static_cast<int>(out.size()) < max;
     if (runLive) {
         std::vector<ResultItem> live;
-        liveSearch(search, max - static_cast<int>(out.size()), live, cancel);
+        liveSearch(search, max - static_cast<int>(out.size()), live, cancel, pathPtr);
         for (auto& r : live) {
             if (!seen.insert(r.path).second) continue;
             out.push_back(std::move(r));
         }
     }
+
+    // Rank the merged set (index + live scan) with one comparator so executables
+    // and shortcuts float to the top no matter which source produced them.
+    rankResults(search, out, pathPtr);
 
     if (!out.empty()) return;
 
@@ -228,7 +264,19 @@ void FileSearchService::query(const std::wstring& raw, int maxResults, std::vect
         out.push_back(std::move(hint));
         return;
     }
-    legacySearch(search, max, out, cancel);
+    legacySearch(search, max, out, cancel, pathPtr);
+    if (pathPtr) rankResults(search, out, pathPtr);
+    if (!out.empty()) return;
+
+    if (pathPtr) {
+        ResultItem hint;
+        hint.title = L"路径搜索无命中";
+        hint.subtitle = L"示例：C:\\Users\\me\\Desktop\\proj  ·  src\\components\\button.tsx（\\ 触发按路径搜索）";
+        hint.icon = L"📁";
+        hint.pluginName = L"File Search";
+        hint.closeAfterExecute = false;
+        out.push_back(std::move(hint));
+    }
 }
 
 void FileSearchService::queryHistory(const std::wstring& raw, std::vector<ResultItem>& out) {
@@ -244,6 +292,30 @@ void FileSearchService::queryHistory(const std::wstring& raw, std::vector<Result
         item.title = e.title;
         item.subtitle = e.pluginName + L" · " + e.usedAt.substr(0, std::min<size_t>(16, e.usedAt.size()));
         item.icon = L"🕘";
+
+        // Resolve the row's real path so history shows the same shell icon as
+        // live results. Entries written by this version carry it directly;
+        // older entries are matched back through the index by exact file name.
+        std::wstring resolved = e.path;
+        if (resolved.empty() && !e.title.empty() && settings_.current.ntfsIndexEnabled) {
+            auto hits = ntfs_.search(e.title, 8, nullptr);
+            for (const auto& h : hits) {
+                if (winutil::equalsIgnoreCase(h.name, e.title)) {
+                    resolved = h.path;
+                    break;
+                }
+            }
+        }
+        if (!resolved.empty()) {
+            DWORD attrs = GetFileAttributesW(resolved.c_str());
+            if (attrs != INVALID_FILE_ATTRIBUTES) {
+                item.iconPath = resolved;
+                item.path = resolved;
+                item.isDirectory = (attrs & FILE_ATTRIBUTE_DIRECTORY) != 0;
+                item.kind = file_rank::classify(e.title, item.isDirectory);
+            }
+        }
+
         item.pluginName = L"History";
         item.copyToClipboard = true;
         item.clipboardText = e.title;
@@ -252,29 +324,69 @@ void FileSearchService::queryHistory(const std::wstring& raw, std::vector<Result
     }
 }
 
+void FileSearchService::rankResults(const std::wstring& search, std::vector<ResultItem>& out,
+                                    const path_query::Query* pathQuery) {
+    if (out.size() < 2) return;
+    if (!pathQuery) {
+        for (auto& item : out) {
+            if (item.path.empty()) continue; // hint row, never ranked with hits
+            item.matchTier = file_rank::matchScore(item.title, search);
+        }
+    }
+    // Path mode keeps the tier computed against the path (re-scoring the bare
+    // title against the whole query would flatten every hit to "contains").
+    std::stable_sort(out.begin(), out.end(), [pathQuery](const ResultItem& a, const ResultItem& b) {
+        bool aHint = a.path.empty();
+        bool bHint = b.path.empty();
+        if (aHint != bHint) return !aHint; // hints always last
+        if (aHint && bHint) return false;
+        if (pathQuery) {
+            return file_rank::betterPathMatch(a.title, a.isDirectory, a.matchTier,
+                                              b.title, b.isDirectory, b.matchTier);
+        }
+        if (a.launchable != b.launchable) return a.launchable;
+        if (a.matchTier != b.matchTier) return a.matchTier < b.matchTier;
+        if (a.kind != b.kind) return static_cast<int>(a.kind) < static_cast<int>(b.kind);
+        if (a.title.size() != b.title.size()) return a.title.size() < b.title.size();
+        return winutil::lessIgnoreCase(a.title, b.title);
+    });
+}
+
 void FileSearchService::searchIndex(const std::wstring& search, int max, std::vector<ResultItem>& out,
-                                    const std::atomic<bool>* cancel) {
-    auto hits = ntfs_.search(search, max, cancel);
+                                    const std::atomic<bool>* cancel, const path_query::Query* pathQuery) {
+    auto hits = ntfs_.search(search, max, cancel, pathQuery);
     for (auto& h : hits) {
         addResult(h.name, h.path, h.isDirectory, L"", out);
+        out.back().matchTier = h.matchTier;
+        out.back().kind = h.kind;
+        out.back().launchable = h.launchable;
     }
 }
 
 void FileSearchService::liveSearch(const std::wstring& search, int max, std::vector<ResultItem>& out,
-                                   const std::atomic<bool>* cancel) {
+                                   const std::atomic<bool>* cancel, const path_query::Query* pathQuery) {
     if (max <= 0) return;
     int timeoutMs = std::clamp(settings_.current.ntfsLiveSearchTimeoutMs, 300, 5000);
     auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(timeoutMs);
     PathSet seen;
 
-    for (const auto& root : searchRoots()) {
+    for (const auto& root : scanRoots(pathQuery, true)) {
         if (static_cast<int>(out.size()) >= max) break;
         enumerateTree(root, 256,
-                      [&](const std::wstring& path, const std::wstring& name, bool isDir) -> bool {
+                      [&](const std::wstring& path, const std::wstring& parent,
+                          const std::wstring& name, bool isDir) -> bool {
                           if (static_cast<int>(out.size()) >= max) return false;
-                          if (!winutil::containsIgnoreCase(name, search)) return true;
+                          int tier = 3;
+                          if (pathQuery) {
+                              path_query::Match match = path_query::scorePath(parent, name, isDir, *pathQuery);
+                              if (match == path_query::Match::None) return true;
+                              tier = static_cast<int>(match);
+                          } else if (!winutil::containsIgnoreCase(name, search)) {
+                              return true;
+                          }
                           if (!seen.insert(path).second) return true;
                           addResult(name, path, isDir, L"实时命中（索引外）", out);
+                          out.back().matchTier = tier;
                           return static_cast<int>(out.size()) < max;
                       },
                       cancel, deadline);
@@ -282,21 +394,33 @@ void FileSearchService::liveSearch(const std::wstring& search, int max, std::vec
 }
 
 void FileSearchService::legacySearch(const std::wstring& search, int max, std::vector<ResultItem>& out,
-                                     const std::atomic<bool>* cancel) {
+                                     const std::atomic<bool>* cancel, const path_query::Query* pathQuery) {
     if (max <= 0) return;
     auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(800);
     PathSet seen;
     // Only the common user folders (parity with the C# version); the whole
-    // drive trees are covered by the NTFS index + time-boxed live scan.
-    for (const auto& root : commonSearchRoots()) {
+    // drive trees are covered by the NTFS index + time-boxed live scan. Path
+    // queries may start at their own existing prefix instead.
+    for (const auto& root : scanRoots(pathQuery, false)) {
         if (static_cast<int>(out.size()) >= max) break;
         enumerateTree(root, 256,
-                      [&](const std::wstring& path, const std::wstring& name, bool isDir) -> bool {
+                      [&](const std::wstring& path, const std::wstring& parent,
+                          const std::wstring& name, bool isDir) -> bool {
                           if (static_cast<int>(out.size()) >= max) return false;
-                          if (isDir) return true;
-                          if (!winutil::containsIgnoreCase(name, search)) return true;
+                          // Name mode keeps files-only results; path search must
+                          // return folders too ("search files or folders by path").
+                          if (isDir && !pathQuery) return true;
+                          int tier = 3;
+                          if (pathQuery) {
+                              path_query::Match match = path_query::scorePath(parent, name, isDir, *pathQuery);
+                              if (match == path_query::Match::None) return true;
+                              tier = static_cast<int>(match);
+                          } else if (!winutil::containsIgnoreCase(name, search)) {
+                              return true;
+                          }
                           if (!seen.insert(path).second) return true;
-                          addResult(name, path, false, L"", out);
+                          addResult(name, path, isDir, L"", out);
+                          out.back().matchTier = tier;
                           return static_cast<int>(out.size()) < max;
                       },
                       cancel, deadline);

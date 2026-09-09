@@ -139,8 +139,11 @@ LRESULT CALLBACK MainWindow::windowProc(HWND hwnd, UINT msg, WPARAM wParam, LPAR
 
 LRESULT CALLBACK MainWindow::editProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
     MainWindow* self = reinterpret_cast<MainWindow*>(GetWindowLongPtrW(hwnd, GWLP_USERDATA));
-    if (self && msg == WM_KEYDOWN) {
-        self->onKeyDown(static_cast<UINT>(wParam));
+    // Consume only the launcher shortcuts (Esc / Up / Down / Enter). Every other
+    // key — Left/Right, Home/End, Ctrl+Left/Right word jumps, Shift selection,
+    // Delete/Backspace, clipboard and IME — must reach the native EDIT control,
+    // which is the only thing that knows how to move the caret.
+    if (self && msg == WM_KEYDOWN && self->onKeyDown(static_cast<UINT>(wParam))) {
         return 0;
     }
     return CallWindowProcW(self && self->prevEditProc_ ? self->prevEditProc_ : DefWindowProcW,
@@ -347,7 +350,7 @@ void MainWindow::startQuery(const std::wstring& text) {
                          winutil::equalsIgnoreCase(text, L"hist") ||
                          winutil::startsWithIgnoreCase(text, L"!!");
         if (isHistory) fileSearch_.queryHistory(text, results);
-        else fileSearch_.query(text, 200, results, cancel.get());
+        else fileSearch_.query(text, settings_.current.fileSearchMaxResults, results, cancel.get());
 
         if (destroyed_) return;
         if (gen == queryGeneration_.load()) {
@@ -365,7 +368,7 @@ void MainWindow::startQuery(const std::wstring& text) {
 void MainWindow::executeResult(const ResultItem& item, bool copyOnly) {
     wchar_t buf[1024] = {};
     GetWindowTextW(editHwnd_, buf, 1023);
-    history_.add(buf, item.title, item.pluginName);
+    history_.add(buf, item.title, item.pluginName, item.path);
 
     if (copyOnly || item.copyToClipboard) {
         copyPath(item);
@@ -416,25 +419,26 @@ void MainWindow::copyPath(const ResultItem& item) {
     }
 }
 
-void MainWindow::onKeyDown(UINT vk) {
+bool MainWindow::onKeyDown(UINT vk) {
     switch (vk) {
         case VK_ESCAPE:
             hide();
-            break;
+            return true;
         case VK_DOWN:
             moveSelection(1);
-            break;
+            return true;
         case VK_UP:
             moveSelection(-1);
-            break;
-        case VK_RETURN: {
+            return true;
+        case VK_RETURN:
             if (selectedIndex_ >= 0 && selectedIndex_ < static_cast<int>(results_.size())) {
                 executeResult(results_[selectedIndex_]);
             }
-            break;
-        }
+            return true;
         default:
-            break;
+            // Not a launcher shortcut: let the edit control handle it (caret
+            // movement, selection, editing, IME composition).
+            return false;
     }
 }
 
@@ -549,6 +553,9 @@ bool MainWindow::createD2D() {
     renderTarget_->CreateSolidColorBrush(colorFrom(kSelected), &selectedBrush_);
     renderTarget_->CreateSolidColorBrush(colorFrom(kAccent), &accentBrush_);
 
+    // Real shell icons (exe/lnk/folder/file type) for result rows.
+    iconCache_ = std::make_unique<IconCache>(renderTarget_);
+
     auto makeFormat = [&](const wchar_t* family, float size, IDWriteTextFormat** out) {
         dwriteFactory_->CreateTextFormat(family, nullptr, DWRITE_FONT_WEIGHT_NORMAL,
                                          DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL,
@@ -578,6 +585,8 @@ bool MainWindow::createD2D() {
 }
 
 void MainWindow::destroyD2D() {
+    // Icons are device-dependent bitmaps: drop them before the target dies.
+    iconCache_.reset();
     if (titleFormat_) titleFormat_->Release();
     if (subtitleFormat_) subtitleFormat_->Release();
     if (iconFormat_) iconFormat_->Release();
@@ -660,11 +669,25 @@ void MainWindow::paint() {
             renderTarget_->FillRoundedRectangle(D2D1::RoundedRect(row, 8.0f, 8.0f), selectedBrush_);
         }
 
-        renderTarget_->DrawTextW(item.icon.c_str(), static_cast<UINT32>(item.icon.size()),
-                                 iconFormat_,
-                                 D2D1::RectF(20.0f, static_cast<float>(rowY + 14),
-                                             64.0f, static_cast<float>(rowY + 46)),
-                                 secondaryBrush_);
+        // Icon column: real shell icon when the row maps to a file/folder,
+        // otherwise the emoji fallback glyph.
+        ID2D1Bitmap* rowIcon = iconCache_ && !item.iconPath.empty()
+                                   ? iconCache_->get(item.iconPath)
+                                   : nullptr;
+        if (rowIcon) {
+            const float iconSize = 28.0f;
+            float iconLeft = 20.0f + (44.0f - iconSize) / 2.0f;
+            float iconTop = static_cast<float>(rowY) + (static_cast<float>(kRowHeight) - iconSize) / 2.0f - 2.0f;
+            renderTarget_->DrawBitmap(rowIcon,
+                                      D2D1::RectF(iconLeft, iconTop, iconLeft + iconSize, iconTop + iconSize),
+                                      1.0f, D2D1_BITMAP_INTERPOLATION_MODE_LINEAR);
+        } else {
+            renderTarget_->DrawTextW(item.icon.c_str(), static_cast<UINT32>(item.icon.size()),
+                                     iconFormat_,
+                                     D2D1::RectF(20.0f, static_cast<float>(rowY + 14),
+                                                 64.0f, static_cast<float>(rowY + 46)),
+                                     secondaryBrush_);
+        }
 
         renderTarget_->DrawTextW(item.title.c_str(), static_cast<UINT32>(item.title.size()),
                                  titleFormat_,

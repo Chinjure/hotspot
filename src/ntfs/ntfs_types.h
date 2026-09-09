@@ -6,6 +6,8 @@
 #include <unordered_set>
 #include <vector>
 
+#include "file_rank.h"
+
 // One logical file-system object produced by a scan or USN update.
 struct NtfsEntry {
     uint64_t ref = 0;
@@ -32,6 +34,12 @@ struct NtfsSearchResult {
     std::wstring name;
     std::wstring path;
     bool isDirectory = false;
+    // Match quality (0 = exact name, 1 = exact stem, 2 = prefix, 3 = contains).
+    int matchTier = 3;
+    // Executable / shortcut / file / directory, used to rank launchable hits first.
+    file_rank::Kind kind = file_rank::Kind::File;
+    // Cached file_rank::isLaunchable(kind) so sorts stay cheap.
+    bool launchable = false;
     uint64_t size = 0;
     uint64_t modifiedTime = 0;
     uint64_t ref = 0;

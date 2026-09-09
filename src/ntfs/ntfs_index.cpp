@@ -10,10 +10,11 @@
 #include <windows.h>
 
 #include <algorithm>
-#include <array>
 #include <cstring>
 #include <stdexcept>
 
+#include "file_rank.h"
+#include "path_query.h"
 #include "winutil.h"
 
 namespace {
@@ -28,51 +29,13 @@ uint64_t readU64(const uint8_t* p) {
     return v;
 }
 
-// One-time invariant-locale lowercase table for 16-bit code units. The record
-// scan in NtfsIndex::search compares names directly inside the memory-mapped
-// name section with this table, so a std::wstring is only allocated when a
-// record actually matches (the C# version does the same with spans).
-const uint16_t* caseFoldTable() {
-    static const std::array<uint16_t, 0x10000> table = [] {
-        std::array<uint16_t, 0x10000> t{};
-        for (uint32_t i = 0; i < 0x10000; i++) t[i] = static_cast<uint16_t>(i);
-        for (uint32_t i = 0; i < 0x10000; i++) {
-            wchar_t src = static_cast<wchar_t>(i);
-            wchar_t out[2] = {};
-            int n = LCMapStringEx(LOCALE_NAME_INVARIANT, LCMAP_LOWERCASE, &src, 1, out, 2,
-                                  nullptr, nullptr, 0);
-            if (n == 1) t[i] = static_cast<uint16_t>(out[0]);
-        }
-        return t;
-    }();
-    return table.data();
-}
-
-inline uint16_t foldChar(wchar_t c) { return caseFoldTable()[static_cast<uint16_t>(c)]; }
-
-// Case-insensitive "contains" against memory-mapped name bytes, allocation-free.
-// `folded` must already be lowercased with foldChar.
-bool containsFolded(const wchar_t* hay, size_t hayLen, const wchar_t* folded, size_t needleLen) {
-    if (needleLen == 0) return true;
-    if (hayLen < needleLen) return false;
-    const uint16_t* table = caseFoldTable();
-    const uint16_t first = static_cast<uint16_t>(folded[0]);
-    const size_t last = hayLen - needleLen;
-    for (size_t i = 0; i <= last; i++) {
-        if (table[static_cast<uint16_t>(hay[i])] != first) continue;
-        size_t j = 1;
-        for (; j < needleLen; j++) {
-            if (table[static_cast<uint16_t>(hay[i + j])] != static_cast<uint16_t>(folded[j])) break;
-        }
-        if (j == needleLen) return true;
-    }
-    return false;
-}
+// One-time invariant-locale lowercase folding lives in winutil (shared with the
+// path-search matcher); names are compared directly inside the memory-mapped
+// name section with it, so a std::wstring is only allocated when a record
+// actually matches (the C# version does the same with spans).
 
 int computeRank(const std::wstring& name, const std::wstring& needle) {
-    if (winutil::equalsIgnoreCase(name, needle)) return 0;
-    if (winutil::startsWithIgnoreCase(name, needle)) return 1;
-    return 2;
+    return file_rank::matchScore(name, needle);
 }
 
 void appendLoadError(const std::wstring& indexPath, const std::wstring& message) {
@@ -261,22 +224,81 @@ std::wstring NtfsIndex::resolvePath(uint64_t refValue, int depth) {
 std::wstring NtfsIndex::resolvePath(uint64_t refValue) { return resolvePath(refValue, 0); }
 
 std::vector<NtfsSearchResult> NtfsIndex::search(const std::wstring& needle, int maxResults,
-                                                const std::atomic<bool>* cancel) {
+                                                const std::atomic<bool>* cancel,
+                                                const path_query::Query* pathQuery) {
     struct Candidate {
         int rank = 0;
         NtfsSearchResult result;
+    };
+    const bool pathMode = pathQuery != nullptr && pathQuery->valid;
+    auto better = [pathMode](const Candidate& a, const Candidate& b) {
+        if (pathMode) {
+            return file_rank::betterPathMatch(a.result.name, a.result.isDirectory, a.rank,
+                                              b.result.name, b.result.isDirectory, b.rank);
+        }
+        if (a.result.launchable != b.result.launchable) return a.result.launchable;
+        if (a.rank != b.rank) return a.rank < b.rank;
+        if (a.result.kind != b.result.kind) {
+            return static_cast<int>(a.result.kind) < static_cast<int>(b.result.kind);
+        }
+        if (a.result.name.size() != b.result.name.size()) {
+            return a.result.name.size() < b.result.name.size();
+        }
+        return winutil::lessIgnoreCase(a.result.name, b.result.name);
     };
     std::vector<Candidate> found;
     if (needle.empty() || maxResults <= 0) return {};
 
     // Fold the needle once; the scan then compares directly against the
     // memory-mapped name section without per-record allocations.
-    std::wstring foldedNeedle(needle.size(), L'\0');
-    for (size_t i = 0; i < needle.size(); i++) foldedNeedle[i] = static_cast<wchar_t>(foldChar(needle[i]));
+    std::wstring foldedNeedle = winutil::foldString(needle);
+
+    // Path mode prefilter: unless the query ends with a separator, its final
+    // segment must occur in the candidate name, so path reconstruction only
+    // runs for plausible records.
+    std::wstring foldedLast;
+    bool namePrefilter = false;
+    if (pathMode) {
+        foldedLast = pathQuery->foldedSegments.empty() ? std::wstring() : pathQuery->foldedSegments.back();
+        namePrefilter = !pathQuery->trailingSeparator && !foldedLast.empty();
+    }
+
+    // Path scoring needs the parent directory of every candidate; resolvePath()
+    // returns a copy, so cache the per-directory result for the scan.
+    std::unordered_map<uint64_t, std::wstring> parentCache;
+    auto parentPathOf = [&](uint64_t ref) -> const std::wstring& {
+        auto it = parentCache.find(ref);
+        if (it != parentCache.end()) return it->second;
+        return parentCache.emplace(ref, resolvePath(ref)).first->second;
+    };
 
     int candidateLimit = std::max(2000, maxResults * 10);
     const uint8_t* records = base_ + ntfs_index_format::kHeaderSize;
     const uint8_t* names = base_ + nameSectionOffset_;
+
+    auto emitCandidate = [&](const std::wstring& displayName, uint64_t parent, bool isDirectory,
+                             uint64_t size, uint64_t modifiedTime, uint64_t refValue, int rank) {
+        std::wstring path;
+        if (isDirectory) {
+            path = resolvePath(refValue & 0xFFFFFFFFFFFFULL);
+        } else {
+            std::wstring directory = resolvePath(parent);
+            path = (!directory.empty() && directory.back() == L'\\') ? directory + displayName
+                                                                     : directory + L"\\" + displayName;
+        }
+        Candidate c;
+        c.rank = rank;
+        c.result.name = displayName;
+        c.result.path = std::move(path);
+        c.result.isDirectory = isDirectory;
+        c.result.matchTier = rank;
+        c.result.kind = file_rank::classify(c.result.name, isDirectory);
+        c.result.launchable = file_rank::isLaunchable(c.result.kind);
+        c.result.size = size;
+        c.result.modifiedTime = modifiedTime;
+        c.result.ref = refValue;
+        found.push_back(std::move(c));
+    };
 
     for (int64_t i = 0; i < recordCount_ && static_cast<int>(found.size()) < candidateLimit; i++) {
         if ((i & 0x3FFF) == 0 && cancel && cancel->load()) break;
@@ -317,13 +339,11 @@ std::vector<NtfsSearchResult> NtfsIndex::search(const std::wstring& needle, int 
             }
         }
 
-        bool matched = false;
         const wchar_t* namePtr = nullptr;
         size_t nameLen = 0;
         if (hasEffectiveName) {
             namePtr = effectiveName.data();
             nameLen = effectiveName.size();
-            matched = containsFolded(namePtr, nameLen, foldedNeedle.data(), foldedNeedle.size());
         } else {
             // View the name bytes directly inside the mapped file; no copy until
             // the needle actually matches.
@@ -335,35 +355,26 @@ std::vector<NtfsSearchResult> NtfsIndex::search(const std::wstring& needle, int 
             }
             namePtr = reinterpret_cast<const wchar_t*>(namePointer + 2);
             nameLen = storedLen / 2;
-            matched = containsFolded(namePtr, nameLen, foldedNeedle.data(), foldedNeedle.size());
         }
-        if (!matched) continue;
 
-        std::wstring displayName;
-        if (hasEffectiveName) {
-            displayName = effectiveName;
+        if (pathMode) {
+            if (namePrefilter &&
+                !winutil::containsFolded(namePtr, nameLen, foldedLast.data(), foldedLast.size())) {
+                continue;
+            }
+            std::wstring displayName(namePtr, nameLen);
+            path_query::Match match = path_query::scorePath(parentPathOf(parentRef), displayName, isDirectory, *pathQuery);
+            if (match == path_query::Match::None) continue;
+            emitCandidate(displayName, parentRef, isDirectory, size, modifiedTime, refValue,
+                          static_cast<int>(match));
         } else {
-            displayName.assign(namePtr, nameLen);
+            if (!winutil::containsFolded(namePtr, nameLen, foldedNeedle.data(), foldedNeedle.size())) {
+                continue;
+            }
+            std::wstring displayName(namePtr, nameLen);
+            emitCandidate(displayName, parentRef, isDirectory, size, modifiedTime, refValue,
+                          computeRank(displayName, needle));
         }
-
-        std::wstring path;
-        if (isDirectory) {
-            path = resolvePath(key);
-        } else {
-            std::wstring directory = resolvePath(parentRef);
-            path = (!directory.empty() && directory.back() == L'\\') ? directory + displayName
-                                                                     : directory + L"\\" + displayName;
-        }
-
-        Candidate c;
-        c.rank = computeRank(displayName, needle);
-        c.result.name = std::move(displayName);
-        c.result.path = std::move(path);
-        c.result.isDirectory = isDirectory;
-        c.result.size = size;
-        c.result.modifiedTime = modifiedTime;
-        c.result.ref = refValue;
-        found.push_back(std::move(c));
     }
 
     if (delta_) {
@@ -392,36 +403,23 @@ std::vector<NtfsSearchResult> NtfsIndex::search(const std::wstring& needle, int 
                     effectiveTime = it->second.modifiedTime;
                 }
             }
-            if (!containsFolded(effectiveName.data(), effectiveName.size(),
-                                foldedNeedle.data(), foldedNeedle.size())) {
-                continue;
-            }
 
-            std::wstring path;
-            if (add.isDirectory) {
-                path = resolvePath(addKey);
+            if (pathMode) {
+                if (namePrefilter && !winutil::containsFolded(effectiveName, foldedLast)) continue;
+                path_query::Match match =
+                    path_query::scorePath(parentPathOf(effectiveParent), effectiveName, add.isDirectory, *pathQuery);
+                if (match == path_query::Match::None) continue;
+                emitCandidate(effectiveName, effectiveParent, add.isDirectory, add.size, effectiveTime,
+                              add.ref, static_cast<int>(match));
             } else {
-                std::wstring directory = resolvePath(effectiveParent);
-                path = (!directory.empty() && directory.back() == L'\\') ? directory + effectiveName
-                                                                         : directory + L"\\" + effectiveName;
+                if (!winutil::containsFolded(effectiveName, foldedNeedle)) continue;
+                emitCandidate(effectiveName, effectiveParent, add.isDirectory, add.size, effectiveTime,
+                              add.ref, computeRank(effectiveName, needle));
             }
-            Candidate c;
-            c.rank = computeRank(effectiveName, needle);
-            c.result.name = effectiveName;
-            c.result.path = std::move(path);
-            c.result.isDirectory = add.isDirectory;
-            c.result.size = add.size;
-            c.result.modifiedTime = effectiveTime;
-            c.result.ref = add.ref;
-            found.push_back(std::move(c));
         }
     }
 
-    std::sort(found.begin(), found.end(), [](const Candidate& a, const Candidate& b) {
-        if (a.rank != b.rank) return a.rank < b.rank;
-        if (a.result.name.size() != b.result.name.size()) return a.result.name.size() < b.result.name.size();
-        return winutil::lessIgnoreCase(a.result.name, b.result.name);
-    });
+    std::sort(found.begin(), found.end(), better);
 
     std::vector<NtfsSearchResult> out;
     size_t count = std::min<size_t>(found.size(), static_cast<size_t>(maxResults));

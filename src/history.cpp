@@ -11,7 +11,8 @@ HistoryService::HistoryService() {
 
 std::wstring HistoryService::path() const { return path_; }
 
-void HistoryService::add(const std::wstring& query, const std::wstring& title, const std::wstring& pluginName) {
+void HistoryService::add(const std::wstring& query, const std::wstring& title, const std::wstring& pluginName,
+                         const std::wstring& resultPath) {
     for (auto it = entries.begin(); it != entries.end();) {
         if (winutil::equalsIgnoreCase(it->title, title) && winutil::equalsIgnoreCase(it->pluginName, pluginName)) {
             it = entries.erase(it);
@@ -24,6 +25,7 @@ void HistoryService::add(const std::wstring& query, const std::wstring& title, c
     e.title = title;
     e.pluginName = pluginName;
     e.usedAt = winutil::nowIsoLocal();
+    e.path = resultPath;
     entries.insert(entries.begin(), std::move(e));
     if (entries.size() > 50) entries.resize(50);
     save();
@@ -43,10 +45,12 @@ void HistoryService::load() {
             const json::Value* title = v.find("Title");
             const json::Value* plugin = v.find("PluginName");
             const json::Value* used = v.find("UsedAt");
+            const json::Value* entryPath = v.find("Path");
             if (query && query->isString()) e.query = winutil::utf8ToWide(query->asString());
             if (title && title->isString()) e.title = winutil::utf8ToWide(title->asString());
             if (plugin && plugin->isString()) e.pluginName = winutil::utf8ToWide(plugin->asString());
             if (used && used->isString()) e.usedAt = winutil::utf8ToWide(used->asString());
+            if (entryPath && entryPath->isString()) e.path = winutil::utf8ToWide(entryPath->asString());
             entries.push_back(std::move(e));
         }
     } catch (...) {
@@ -63,6 +67,7 @@ void HistoryService::save() {
             obj["Title"] = json::Value(winutil::wideToUtf8(e.title));
             obj["PluginName"] = json::Value(winutil::wideToUtf8(e.pluginName));
             obj["UsedAt"] = json::Value(winutil::wideToUtf8(e.usedAt));
+            if (!e.path.empty()) obj["Path"] = json::Value(winutil::wideToUtf8(e.path));
             arr.push_back(json::Value(std::move(obj)));
         }
         winutil::writeTextFile(path_, json::serialize(json::Value(std::move(arr))));

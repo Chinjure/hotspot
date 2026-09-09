@@ -13,6 +13,7 @@
 #include "ui/main_window.h"
 #include "ntfs/ntfs_service.h"
 #include "ntfs/ntfs_win32.h"
+#include "path_query.h"
 #include "settings.h"
 #include "tray.h"
 #include "winutil.h"
@@ -56,6 +57,20 @@ void writeLog(const std::wstring& path, const std::vector<std::wstring>& lines) 
     winutil::writeTextFile(path, content);
 }
 
+std::wstring kindLabel(file_rank::Kind kind) {
+    switch (kind) {
+        case file_rank::Kind::Executable: return L"exe";
+        case file_rank::Kind::Shortcut: return L"lnk";
+        case file_rank::Kind::Directory: return L"dir";
+        default: return L"file";
+    }
+}
+
+std::wstring describeHit(const std::wstring& name, const std::wstring& path, file_rank::Kind kind,
+                         int tier) {
+    return name + L" | " + path + L" | " + kindLabel(kind) + L" tier=" + std::to_wstring(tier);
+}
+
 int runCli(const std::vector<std::wstring>& args) {
     bool isCli = hasArg(args, L"--index-build") || hasArg(args, L"--index-search") ||
                  hasArg(args, L"--index-status") || hasArg(args, L"--live-search");
@@ -90,12 +105,21 @@ int runCli(const std::vector<std::wstring>& args) {
         std::wstring q = argAfter(args, L"--index-search");
         waitForReady(ntfs);
         auto status = ntfs.status();
-        auto hits = ntfs.search(q, 30, nullptr);
+        path_query::Query pathQuery;
+        const path_query::Query* pathPtr = nullptr;
+        if (path_query::looksLikePath(q)) {
+            pathQuery = path_query::parse(q);
+            if (pathQuery.valid) pathPtr = &pathQuery;
+        }
+        auto hits = ntfs.search(q, 30, nullptr, pathPtr);
         std::vector<std::wstring> log;
-        log.push_back(L"[search] " + winutil::nowIsoLocal() + L" query=" + q);
+        log.push_back(L"[search] " + winutil::nowIsoLocal() + L" query=" + q +
+                      (pathPtr ? L" (path mode)" : L" (name mode)"));
         log.push_back(L"[search] status: " + status.summary);
         log.push_back(L"[search] results=" + std::to_wstring(hits.size()));
-        for (const auto& h : hits) log.push_back(h.name + L" | " + h.path);
+        for (const auto& h : hits) {
+            log.push_back(describeHit(h.name, h.path, h.kind, h.matchTier));
+        }
         writeLog(winutil::joinPath(logDir, L"search.log"), log);
         return 0;
     }
@@ -129,7 +153,8 @@ int runCli(const std::vector<std::wstring>& args) {
                       std::to_wstring(results.size()));
         log.push_back(L"[live] status: " + status.summary);
         for (size_t i = 0; i < results.size() && i < 50; i++) {
-            log.push_back(results[i].title + L" | " + results[i].subtitle);
+            log.push_back(describeHit(results[i].title, results[i].subtitle, results[i].kind,
+                                      results[i].matchTier));
         }
         writeLog(winutil::joinPath(logDir, L"live-search.log"), log);
         return 0;
@@ -142,11 +167,16 @@ int runCli(const std::vector<std::wstring>& args) {
 
 int appMain(HINSTANCE instance, const std::wstring& commandLine, int showCmd) {
     (void)showCmd;
+    // Shell icons (SHGetImageList) and WIC both need COM on this thread.
+    HRESULT oleHr = OleInitialize(nullptr);
     std::vector<std::wstring> args = parseArgs(commandLine);
     winutil::debugLog(L"appMain start, args=" + (args.empty() ? L"(none)" : args[0]));
 
     int cliResult = runCli(args);
-    if (cliResult >= 0) return cliResult;
+    if (cliResult >= 0) {
+        if (SUCCEEDED(oleHr)) OleUninitialize();
+        return cliResult;
+    }
 
     SettingsService settings;
     HistoryService history;
@@ -190,5 +220,6 @@ int appMain(HINSTANCE instance, const std::wstring& commandLine, int showCmd) {
     main.setTray(nullptr);
     tray.remove();
     ntfs.dispose();
+    if (SUCCEEDED(oleHr)) OleUninitialize();
     return 0;
 }

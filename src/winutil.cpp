@@ -6,6 +6,7 @@
 #include <shellapi.h>
 
 #include <algorithm>
+#include <array>
 #include <cstdio>
 #include <cwchar>
 #include <sstream>
@@ -162,6 +163,59 @@ bool lessIgnoreCase(const std::wstring& a, const std::wstring& b) {
     int r = lstrcmpiW(a.c_str(), b.c_str());
     if (r != 0) return r < 0;
     return a < b;
+}
+
+namespace {
+
+// One-time invariant-locale lowercase table for 16-bit code units. The NTFS
+// record scan compares names directly inside the memory-mapped name section
+// with this table, so a std::wstring is only allocated on an actual match.
+const uint16_t* caseFoldTable() {
+    static const std::array<uint16_t, 0x10000> table = [] {
+        std::array<uint16_t, 0x10000> t{};
+        for (uint32_t i = 0; i < 0x10000; i++) t[i] = static_cast<uint16_t>(i);
+        for (uint32_t i = 0; i < 0x10000; i++) {
+            wchar_t src = static_cast<wchar_t>(i);
+            wchar_t out[2] = {};
+            int n = LCMapStringEx(LOCALE_NAME_INVARIANT, LCMAP_LOWERCASE, &src, 1, out, 2,
+                                  nullptr, nullptr, 0);
+            if (n == 1) t[i] = static_cast<uint16_t>(out[0]);
+        }
+        return t;
+    }();
+    return table.data();
+}
+
+} // namespace
+
+wchar_t foldChar(wchar_t c) {
+    return static_cast<wchar_t>(caseFoldTable()[static_cast<uint16_t>(c)]);
+}
+
+std::wstring foldString(const std::wstring& text) {
+    const uint16_t* table = caseFoldTable();
+    std::wstring out(text.size(), L'\0');
+    for (size_t i = 0; i < text.size(); i++) {
+        out[i] = static_cast<wchar_t>(table[static_cast<uint16_t>(text[i])]);
+    }
+    return out;
+}
+
+bool containsFolded(const wchar_t* hay, size_t hayLen, const wchar_t* folded, size_t foldedLen) {
+    if (foldedLen == 0) return true;
+    if (hayLen < foldedLen) return false;
+    const uint16_t* table = caseFoldTable();
+    const uint16_t first = static_cast<uint16_t>(folded[0]);
+    const size_t last = hayLen - foldedLen;
+    for (size_t i = 0; i <= last; i++) {
+        if (table[static_cast<uint16_t>(hay[i])] != first) continue;
+        size_t j = 1;
+        for (; j < foldedLen; j++) {
+            if (table[static_cast<uint16_t>(hay[i + j])] != static_cast<uint16_t>(folded[j])) break;
+        }
+        if (j == foldedLen) return true;
+    }
+    return false;
 }
 
 std::wstring lastErrorText(DWORD code) {

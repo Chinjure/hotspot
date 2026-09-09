@@ -13,6 +13,7 @@
 
 #include "file_search.h"
 #include "history.h"
+#include "icon_cache.h"
 #include "ntfs/ntfs_service.h"
 #include "settings.h"
 
@@ -59,7 +60,9 @@ private:
     void openContainingPath(const ResultItem& item);
     void copyPath(const ResultItem& item);
 
-    void onKeyDown(UINT vk);
+    // Returns true when the launcher consumed the key. Unconsumed keys must be
+    // forwarded to the native EDIT control, otherwise caret editing dies.
+    bool onKeyDown(UINT vk);
     void moveSelection(int delta);
     void ensureSelectedVisible();
     void onMouseLeftClick(int x, int y);
@@ -109,6 +112,7 @@ private:
     ID2D1Factory* d2dFactory_ = nullptr;
     ID2D1HwndRenderTarget* renderTarget_ = nullptr;
     IDWriteFactory* dwriteFactory_ = nullptr;
+    std::unique_ptr<IconCache> iconCache_;
     IDWriteTextFormat* titleFormat_ = nullptr;
     IDWriteTextFormat* subtitleFormat_ = nullptr;
     IDWriteTextFormat* iconFormat_ = nullptr;

@@ -24,6 +24,10 @@ publish\hotspot-cpp.exe   # 原生 PE32+ GUI x64
 ## 功能
 
 - 文件搜索：`fs <name>`、`? <name>`、无前缀 Everything 式搜索（设置可关）
+- 路径搜索：查询里出现 `\`（`/` 等价）即按路径搜索，例如
+  `C:\Users\me\Desktop\proj`、`src\components\button.tsx`；末尾带 `\`
+  表示列出该文件夹及其内容；绝对路径按字面前缀限定范围，相对路径允许
+  省略中间目录。结果排序为 **exe/lnk > 文件夹 > 其它文件**
 - NTFS $MFT 全盘索引：优先 `$MFT` + SeBackupPrivilege，失败自动 walk 回退
 - 索引持久化与 C# 版**二进制兼容**：直接复用
   `%LocalAppData%\hotspot\ntfs\C-index.dat / C-meta.json / C-delta.json`
@@ -44,11 +48,20 @@ publish\hotspot-cpp.exe   # 原生 PE32+ GUI x64
 
 ```
 hotspot-cpp.exe --index-build [C]
-hotspot-cpp.exe --index-search <name>
+hotspot-cpp.exe --index-search <name|path>   # 含 \ 时按路径搜索
 hotspot-cpp.exe --index-status
-hotspot-cpp.exe --live-search <name>
+hotspot-cpp.exe --live-search <name|path>    # 含 \ 时按路径搜索
 hotspot-cpp.exe --settings       # GUI：启动后打开设置
 hotspot-cpp.exe --stay           # GUI：保持窗口（截图/调试用，不失焦隐藏）
+```
+
+## 验证
+
+```powershell
+.\verify\path-query-test.ps1     # 路径匹配与排序单元测试（毫秒级，不需要索引）
+.\verify\path-search-check.ps1   # 端到端：真实 exe + 临时夹具 + 真实索引，检查顺序与范围
+.\verify\capture.ps1 -Mode search -Query "C:\Users\me\Desktop" `
+                     -Out artifacts\cpp-path-search.png
 ```
 
 ## 源码结构
@@ -57,6 +70,11 @@ hotspot-cpp.exe --stay           # GUI：保持窗口（截图/调试用，不�
 hotspot/
 ├── build.ps1
 ├── README.md
+├── verify/                          # 验证脚本（单元测试 / 端到端 / 截图）
+│   ├── path_query_test.cpp          # 路径匹配 + 排序单元测试
+│   ├── path-query-test.ps1          # 编译并运行上面的单元测试
+│   ├── path-search-check.ps1        # 端到端路径搜索检查
+│   └── capture.ps1                  # GUI 截图
 └── src/
     ├── main.cpp / app.{h,cpp}        # WinMain、GUI/CLI 分派
     ├── json.{h,cpp}                  # 最小 JSON（UTF-8，兼容 .NET 序列化）
@@ -64,8 +82,10 @@ hotspot/
     ├── history.{h,cpp}               # history.json
     ├── hotkey.{h,cpp}                # RegisterHotKey
     ├── tray.{h,cpp}                  # Shell_NotifyIcon
-    ├── winutil.{h,cpp}               # 路径/编码/字符串/文件工具
-    ├── file_search.{h,cpp}           # fs/?/无前缀 + 实时兜底 + 历史
+    ├── winutil.{h,cpp}               # 路径/编码/字符串/大小写折叠工具
+    ├── path_query.{h,cpp}            # \ 触发的路径查询解析与匹配分级
+    ├── file_rank.{h,cpp}             # 结果排序（名字模式 / 路径模式）
+    ├── file_search.{h,cpp}           # fs/?/无前缀 + 路径搜索 + 实时兜底 + 历史
     ├── ui/
     │   ├── main_window.{h,cpp}       # Direct2D 启动器窗口
     │   ├── settings_window.{h,cpp}   # Win32 设置窗口

@@ -11,6 +11,7 @@
 #include <vector>
 
 #include "ntfs_types.h"
+#include "path_query.h"
 
 class NtfsIndex {
 public:
@@ -24,8 +25,11 @@ public:
 
     int64_t recordCount() const { return recordCount_; }
 
+    // Name search when `pathQuery` is null; otherwise the query's segments are
+    // matched against the reconstructed path (see path_query::scorePath).
     std::vector<NtfsSearchResult> search(const std::wstring& needle, int maxResults,
-                                         const std::atomic<bool>* cancel = nullptr);
+                                         const std::atomic<bool>* cancel = nullptr,
+                                         const path_query::Query* pathQuery = nullptr);
 
 private:
     struct DirEntry {
