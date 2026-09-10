@@ -7,13 +7,19 @@
 #include <shlwapi.h>
 #include <wincodec.h>
 
+#include <cstring>
 #include <cwctype>
+#include <vector>
 
 #include "winutil.h"
 
 namespace {
 
 constexpr size_t kMaxCachedIcons = 768;
+
+// Below this opaque-content coverage an icon bitmap is treated as a padded
+// canvas rather than a real icon (see normalizePaddedCanvas).
+constexpr double kPaddedCanvasFill = 0.5;
 
 std::wstring lowerKey(const std::wstring& s) {
     std::wstring out = s;
@@ -97,6 +103,61 @@ std::wstring resolveShortcutTarget(const std::wstring& path) {
     }
     link->Release();
     return target;
+}
+
+struct CroppedCanvas {
+    std::vector<BYTE> pixels;
+    int width = 0;
+    int height = 0;
+    bool valid() const { return width > 0 && height > 0; }
+};
+
+// Shell image lists can hand back a *padded canvas*: when an item has no
+// high-resolution frame, the jumbo (256x256) entry is the small icon pasted
+// into the top-left of an otherwise empty bitmap instead of an upscaled one.
+// Measured on "...\Tencent\Weixin\4.1.13.12\WeixinExt.exe": 44x37 of opaque
+// content inside a 256x256 canvas (2.5% coverage) whose opaque pixel count is
+// identical to the 48x48 entry's, i.e. a straight paste, not an upscale.
+//
+// Rendering that canvas unchanged collapses the icon into the corner of the row
+// slot, because callers stretch the whole bitmap into a square rect. Crop to
+// the opaque content and re-centre it in a *square* canvas: the padding goes
+// away and the aspect ratio survives, since the caller scales to a square.
+// Returns an invalid CroppedCanvas when the bitmap is already fine.
+CroppedCanvas normalizePaddedCanvas(const BYTE* pixels, int w, int h) {
+    CroppedCanvas out;
+    if (!pixels || w <= 0 || h <= 0) return out;
+
+    int minX = w, minY = h, maxX = -1, maxY = -1;
+    for (int y = 0; y < h; y++) {
+        for (int x = 0; x < w; x++) {
+            if (pixels[(static_cast<size_t>(y) * w + x) * 4 + 3] == 0) continue;
+            if (x < minX) minX = x;
+            if (x > maxX) maxX = x;
+            if (y < minY) minY = y;
+            if (y > maxY) maxY = y;
+        }
+    }
+    if (maxX < minX || maxY < minY) return out; // nothing opaque; leave it alone
+
+    const int cw = maxX - minX + 1;
+    const int ch = maxY - minY + 1;
+    if (static_cast<double>(cw) * ch / (static_cast<double>(w) * h) >= kPaddedCanvasFill) {
+        return out; // a real icon whose margins are intentional
+    }
+
+    const int side = cw > ch ? cw : ch;
+    out.pixels.assign(static_cast<size_t>(side) * side * 4, 0);
+    const int offX = (side - cw) / 2;
+    const int offY = (side - ch) / 2;
+    for (int y = 0; y < ch; y++) {
+        const BYTE* src = pixels + (static_cast<size_t>(minY + y) * w + minX) * 4;
+        BYTE* dst = out.pixels.data() + (static_cast<size_t>(offY + y) * side + offX) * 4;
+        memcpy(dst, src, static_cast<size_t>(cw) * 4);
+    }
+    out.width = side;
+    out.height = side;
+    return out;
 }
 
 // Render a HICON into a premultiplied-ARGB WIC bitmap.
@@ -187,10 +248,25 @@ bool renderIconToArgb(IWICImagingFactory* wic, HICON icon, const ICONINFO& info,
         for (size_t i = 3; i < bytes; i += 4) pixels[i] = 255;
     }
 
-    HRESULT hr = wic->CreateBitmapFromMemory(static_cast<UINT>(w), static_cast<UINT>(h),
+    // Drop the shell's padding, if any, before handing the bitmap to D2D.
+    int outW = w;
+    int outH = h;
+    BYTE* outPixels = pixels;
+    CroppedCanvas normalized = normalizePaddedCanvas(pixels, w, h);
+    if (normalized.valid()) {
+        outW = normalized.width;
+        outH = normalized.height;
+        outPixels = normalized.pixels.data();
+        winutil::debugLog(L"icon_cache: cropped padded canvas " + std::to_wstring(w) + L"x" +
+                          std::to_wstring(h) + L" -> " + std::to_wstring(outW) + L"x" +
+                          std::to_wstring(outH));
+    }
+
+    const size_t outBytes = static_cast<size_t>(outW) * static_cast<size_t>(outH) * 4;
+    HRESULT hr = wic->CreateBitmapFromMemory(static_cast<UINT>(outW), static_cast<UINT>(outH),
                                              GUID_WICPixelFormat32bppPBGRA,
-                                             static_cast<UINT>(w) * 4, static_cast<UINT>(bytes),
-                                             pixels, out);
+                                             static_cast<UINT>(outW) * 4,
+                                             static_cast<UINT>(outBytes), outPixels, out);
     DeleteObject(dib);
     return SUCCEEDED(hr) && *out != nullptr;
 }
