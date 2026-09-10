@@ -27,13 +27,16 @@ publish\hotspot-cpp.exe   # 原生 PE32+ GUI x64
 - 路径搜索：查询里出现 `\`（`/` 等价）即按路径搜索，例如
   `C:\Users\me\Desktop\proj`、`src\components\button.tsx`；末尾带 `\`
   表示列出该文件夹及其内容；绝对路径按字面前缀限定范围，相对路径允许
-  省略中间目录。结果排序为 **exe/lnk > 文件夹 > 其它文件**
+  省略中间目录。结果排序**先看路径匹配度**（精确名/精确茎 > 前缀 > 包含 >
+  子项），同一匹配档内才是 **exe/lnk > 文件夹 > 其它文件**
 - NTFS $MFT 全盘索引：优先 `$MFT` + SeBackupPrivilege，失败自动 walk 回退
 - 索引持久化与 C# 版**二进制兼容**：直接复用
   `%LocalAppData%\hotspot\ntfs\C-index.dat / C-meta.json / C-delta.json`
 - USN Journal 增量更新（管理员权限时），Delta overlay 合并
 - 索引外实时搜索（默认 800ms 时限，300–5000ms 可调）
-- 多盘公平配额 + 相关度排序（精确名 > 前缀 > 包含，短名优先）
+- 多盘公平配额 + 相关度排序：**名字匹配优先于文件类型**（精确名/精确茎 >
+  前缀 > 包含；同档内才比 exe/lnk > 文件 > 文件夹；短名优先），所以搜 `clock`
+  时完全名为 `clock` 的文件夹排在 `Clock Widget.lnk` 之前
 - 无边框、圆角、TopMost 启动器窗口（Direct2D 自绘结果列表）
 - 全局热键（默认 `Alt+Space`，可修改）
 - 托盘图标：左键显示启动器，右键 显示/设置/退出
@@ -60,6 +63,7 @@ hotspot-cpp.exe --stay           # GUI：保持窗口（截图/调试用，不�
 ```powershell
 .\verify\path-query-test.ps1     # 路径匹配与排序单元测试（毫秒级，不需要索引）
 .\verify\path-search-check.ps1   # 端到端：真实 exe + 临时夹具 + 真实索引，检查顺序与范围
+.\verify\focus-keys.ps1          # GUI：焦点/键盘回归（点空白、右键菜单后 Esc 与输入仍有效）
 .\verify\capture.ps1 -Mode search -Query "C:\Users\me\Desktop" `
                      -Out artifacts\cpp-path-search.png
 ```

@@ -146,6 +146,18 @@ LRESULT CALLBACK MainWindow::editProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM
     if (self && msg == WM_KEYDOWN && self->onKeyDown(static_cast<UINT>(wParam))) {
         return 0;
     }
+    // TranslateMessage() already turned that key into its control character
+    // before the WM_KEYDOWN above was dispatched (Esc -> 0x1B, Enter -> 0x0D,
+    // Ctrl+Enter -> 0x0A), so the queued WM_CHAR still arrives here -- after Esc
+    // has already hidden the window. A single-line EDIT cannot insert such a
+    // character and answers it with the system default beep, which is the "ding"
+    // heard on Esc. Swallow exactly the characters of the shortcuts we consume;
+    // Backspace (0x08), Tab (0x09) and every printable character must keep
+    // reaching the EDIT.
+    if (self && msg == WM_CHAR) {
+        wchar_t ch = static_cast<wchar_t>(wParam);
+        if (ch == L'\x1B' || ch == L'\r' || ch == L'\n') return 0;
+    }
     return CallWindowProcW(self && self->prevEditProc_ ? self->prevEditProc_ : DefWindowProcW,
                            hwnd, msg, wParam, lParam);
 }
@@ -227,9 +239,6 @@ LRESULT MainWindow::handleMessage(UINT msg, WPARAM wParam, LPARAM lParam) {
             }
             return 0;
         }
-        case MainWindow::WM_EDIT_KEYDOWN:
-            onKeyDown(static_cast<UINT>(wParam));
-            return 0;
         case WM_COMMAND: {
             int id = LOWORD(wParam);
             int code = HIWORD(wParam);
@@ -256,6 +265,16 @@ LRESULT MainWindow::handleMessage(UINT msg, WPARAM wParam, LPARAM lParam) {
             SetBkMode(hdc, OPAQUE);
             return reinterpret_cast<LRESULT>(bg);
         }
+        case WM_SETFOCUS:
+            // Every launcher shortcut (Esc/Enter/arrows) lives in the input
+            // field's subclass, so the frame must never keep the focus. This is
+            // what makes the keyboard survive a window that hands the frame back
+            // (a destroyed settings window activating its owner, a menu, a
+            // stray SetFocus): the focus is bounced straight to the search box.
+            // GetActiveWindow() keeps another window's focus (the settings
+            // window shares this thread's input queue) untouched.
+            if (editHwnd_ && GetActiveWindow() == hwnd_) SetFocus(editHwnd_);
+            return 0;
         case WM_MOUSEWHEEL:
             onMouseWheel(GET_WHEEL_DELTA_WPARAM(wParam));
             return 0;

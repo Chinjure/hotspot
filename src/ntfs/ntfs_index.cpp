@@ -236,15 +236,8 @@ std::vector<NtfsSearchResult> NtfsIndex::search(const std::wstring& needle, int 
             return file_rank::betterPathMatch(a.result.name, a.result.isDirectory, a.rank,
                                               b.result.name, b.result.isDirectory, b.rank);
         }
-        if (a.result.launchable != b.result.launchable) return a.result.launchable;
-        if (a.rank != b.rank) return a.rank < b.rank;
-        if (a.result.kind != b.result.kind) {
-            return static_cast<int>(a.result.kind) < static_cast<int>(b.result.kind);
-        }
-        if (a.result.name.size() != b.result.name.size()) {
-            return a.result.name.size() < b.result.name.size();
-        }
-        return winutil::lessIgnoreCase(a.result.name, b.result.name);
+        return file_rank::betterNameMatch(a.result.name, a.result.isDirectory, a.result.matchTier,
+                                          b.result.name, b.result.isDirectory, b.result.matchTier);
     };
     std::vector<Candidate> found;
     if (needle.empty() || maxResults <= 0) return {};

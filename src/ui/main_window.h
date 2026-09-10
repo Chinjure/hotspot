@@ -40,7 +40,6 @@ public:
 
     static constexpr UINT WM_TRAY = WM_APP + 1;
     static constexpr UINT WM_QUERY_RESULT = WM_APP + 2;
-    static constexpr UINT WM_EDIT_KEYDOWN = WM_APP + 3;
 
 private:
     static LRESULT CALLBACK windowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam);

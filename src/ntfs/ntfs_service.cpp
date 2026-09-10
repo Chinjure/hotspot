@@ -400,11 +400,8 @@ std::vector<NtfsSearchResult> NtfsService::search(const std::wstring& needle, in
                           return file_rank::betterPathMatch(a.name, a.isDirectory, a.matchTier,
                                                             b.name, b.isDirectory, b.matchTier);
                       }
-                      if (a.launchable != b.launchable) return a.launchable;
-                      if (a.matchTier != b.matchTier) return a.matchTier < b.matchTier;
-                      if (a.kind != b.kind) return static_cast<int>(a.kind) < static_cast<int>(b.kind);
-                      if (a.name.size() != b.name.size()) return a.name.size() < b.name.size();
-                      return winutil::lessIgnoreCase(a.name, b.name);
+                      return file_rank::betterNameMatch(a.name, a.isDirectory, a.matchTier,
+                                                        b.name, b.isDirectory, b.matchTier);
                   });
     }
     if (static_cast<int>(results.size()) > maxResults) results.resize(static_cast<size_t>(maxResults));

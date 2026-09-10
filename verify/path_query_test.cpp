@@ -106,28 +106,74 @@ void testFolderListing() {
     checkTier(L"C:\\Program Files (x86)\\Windows Media Player", L"wmprph.exe", false,
               L"C:\\Windows\\", path_query::Match::None,
               "absolute trailing: literal scope, no folder containing Windows");
+    checkTier(L"C:\\ProgramData\\Microsoft", L"Windows", true, L"C:\\Windows\\",
+              path_query::Match::None,
+              "absolute trailing: a deeper folder with the same name is not the named folder");
+    checkTier(L"C:\\a", L"b", true, L"C:\\a\\b\\", path_query::Match::NameExact,
+              "absolute trailing: three-segment query names that exact folder");
+    checkTier(L"C:\\other\\a", L"b", true, L"C:\\a\\b\\", path_query::Match::None,
+              "absolute trailing: the same name deeper down is rejected");
+    checkTier(L"C:\\Windows", L"System32", true, L"C:\\Windows\\", path_query::Match::Descendant,
+              "absolute trailing: a child folder of the named folder is a descendant");
     checkTier(L"C:\\WindowsApps", L"x.txt", false, L"C:\\Windows\\", path_query::Match::None,
               "absolute trailing: sibling folder with a shared prefix is rejected");
 }
 
+// Shorthand for a name-mode comparison at the tiers matchScore() would give.
+bool nameOrder(const wchar_t* a, bool aDir, const wchar_t* b, bool bDir, const wchar_t* query) {
+    return file_rank::betterNameMatch(a, aDir, file_rank::matchScore(a, query),
+                                      b, bDir, file_rank::matchScore(b, query));
+}
+
 void testOrdering() {
-    // Group order: exe/lnk first, then folders, then other files.
-    check(file_rank::betterPathMatch(L"setup.exe", false, kDescendant, L"tools", true, kExact),
-          "ordering: exe before folder even with a worse tier");
-    check(file_rank::betterPathMatch(L"tools", true, kDescendant, L"readme.md", false, kExact),
-          "ordering: folder before file even with a worse tier");
+    // The match decides first: a better tier beats any kind preference.
+    check(file_rank::betterPathMatch(L"tools", true, kExact, L"setup.exe", false, kDescendant),
+          "ordering: folder named by the query before a loose exe inside it");
+    check(file_rank::betterPathMatch(L"readme.md", false, kExact, L"tools", true, kDescendant),
+          "ordering: exact-name file before a worse-tier folder");
     check(file_rank::betterPathMatch(L"report.md", false, kExact, L"readme.md", false, kContains),
           "ordering: better tier first inside one group");
+    check(!file_rank::betterPathMatch(L"readme.md", false, kContains, L"tools", true, kExact),
+          "ordering: kind does not outrank a worse path match");
+
+    // Same path tier: exe/lnk, then folders, then other files.
+    check(file_rank::betterPathMatch(L"setup.exe", false, kExact, L"tools", true, kExact),
+          "ordering: exe before folder at the same tier");
+    check(file_rank::betterPathMatch(L"tools", true, kExact, L"readme.md", false, kExact),
+          "ordering: folder before file at the same tier");
     check(file_rank::betterPathMatch(L"setup.exe", false, kExact, L"setup.lnk", false, kExact),
           "ordering: exe before lnk at the same tier");
     check(!file_rank::betterPathMatch(L"readme.md", false, kExact, L"tools", true, kExact),
           "ordering: file does not precede folder");
+    check(!file_rank::betterPathMatch(L"proj", true, kExact, L"proj.exe", false, kStem),
+          "ordering: exe before the exact folder inside one quality class");
+}
 
-    // Name mode must keep the historical behaviour (files before folders).
-    check(file_rank::betterMatch(L"report.md", false, L"reports", true, L"report"),
-          "regression: name mode still prefers files over folders");
-    check(file_rank::betterMatch(L"steam.exe", false, L"steam", true, L"steam"),
-          "regression: name mode still prefers launchable");
+void testNameOrdering() {
+    // Reported bug: a shortcut that merely shares the word must not outrank the
+    // folder whose name is exactly the query.
+    check(nameOrder(L"clock", true, L"Clock Widget.lnk", false, L"clock"),
+          "name ordering: exact folder before prefix lnk");
+    check(nameOrder(L"clock", true, L"clockify.lnk", false, L"clock"),
+          "name ordering: exact folder before prefix lnk (no space)");
+    check(nameOrder(L"clock", true, L"myclock.exe", false, L"clock"),
+          "name ordering: exact folder before contains exe");
+    check(nameOrder(L"clock", true, L"clocks", true, L"clock"),
+          "name ordering: exact folder before prefix folder");
+
+    // Equal name quality: the launcher kinds keep their order.
+    check(nameOrder(L"steam.exe", false, L"steam", true, L"steam"),
+          "name ordering: exe (exact stem) before the exact folder");
+    check(nameOrder(L"Steam.lnk", false, L"steam", true, L"steam"),
+          "name ordering: lnk before the exact folder");
+    check(nameOrder(L"steam.exe", false, L"Steam.lnk", false, L"steam"),
+          "name ordering: exe before lnk");
+    check(nameOrder(L"clock", true, L"clock.txt", false, L"clock"),
+          "name ordering: exact name before exact stem when the kinds tie");
+
+    // A better match still beats a folder, which used to be the other way round.
+    check(nameOrder(L"report.md", false, L"reports", true, L"report"),
+          "name ordering: exact-stem file before prefix folder");
 }
 
 } // namespace
@@ -137,6 +183,7 @@ int wmain() {
     testNameQueries();
     testFolderListing();
     testOrdering();
+    testNameOrdering();
     std::printf("\n%s (%d failure%s)\n", failures == 0 ? "PASS" : "FAIL", failures,
                 failures == 1 ? "" : "s");
     return failures == 0 ? 0 : 1;

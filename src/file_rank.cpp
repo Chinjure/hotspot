@@ -30,6 +30,17 @@ std::wstring stemOf(const std::wstring& name) {
     return name.substr(0, dot);
 }
 
+// Match-quality class: which tier is compared before any kind preference.
+// Exact name (0) and exact stem (1) share one class -- "steam" is answered by
+// both steam.exe and a folder named Steam, so the kind decides between them
+// rather than the tier. Prefix (2) and substring (3) stay their own classes,
+// and the path-mode Descendant (4) stays the weakest. A negative tier is never
+// a real match (path_query::Match::None), so it must not sort to the top.
+int qualityClass(int tier) {
+    if (tier < 0) return 99;
+    return tier <= 1 ? 0 : tier;
+}
+
 } // namespace
 
 std::wstring extensionOf(const std::wstring& name) {
@@ -58,20 +69,21 @@ int matchScore(const std::wstring& name, const std::wstring& needle) {
     return 3;
 }
 
-bool betterMatch(const std::wstring& aName, bool aIsDir,
-                 const std::wstring& bName, bool bIsDir,
-                 const std::wstring& needle) {
-    // 1) Launchable first (executables and shortcuts share one group).
+bool betterNameMatch(const std::wstring& aName, bool aIsDir, int aTier,
+                     const std::wstring& bName, bool bIsDir, int bTier) {
+    // 1) The better name match always wins; file type never outranks it.
+    int ca = qualityClass(aTier);
+    int cb = qualityClass(bTier);
+    if (ca != cb) return ca < cb;
+
+    // 2) Equally good name matches: launchable first (exe and lnk share a group).
     bool aLaunch = isLaunchable(classify(aName, aIsDir));
     bool bLaunch = isLaunchable(classify(bName, bIsDir));
     if (aLaunch != bLaunch) return aLaunch;
 
-    // 2) Then match quality inside the same group.
-    int am = matchScore(aName, needle);
-    int bm = matchScore(bName, needle);
-    if (am != bm) return am < bm;
-
-    // 3) Then the finer kind (exe before lnk, file before folder).
+    // 3) Then the exact tier, the finer kind (exe before lnk, file before
+    //    folder), name length, and finally the alphabet.
+    if (aTier != bTier) return aTier < bTier;
     Kind ak = classify(aName, aIsDir);
     Kind bk = classify(bName, bIsDir);
     if (ak != bk) return static_cast<int>(ak) < static_cast<int>(bk);
@@ -93,15 +105,19 @@ int pathGroup(const std::wstring& name, bool isDir) {
 
 bool betterPathMatch(const std::wstring& aName, bool aIsDir, int aTier,
                      const std::wstring& bName, bool bIsDir, int bTier) {
-    // 1) Executables and shortcuts stay on top, folders come right after them.
+    // 1) The better path match always wins; file type never outranks it.
+    int ca = qualityClass(aTier);
+    int cb = qualityClass(bTier);
+    if (ca != cb) return ca < cb;
+
+    // 2) Equally good path matches: exe/lnk, then folders, then other files.
     int ga = pathGroup(aName, aIsDir);
     int gb = pathGroup(bName, bIsDir);
     if (ga != gb) return ga < gb;
 
-    // 2) Inside one group the path match tier decides.
+    // 3) Then the exact tier, the finer kind (exe before lnk), name length and
+    //    the alphabet.
     if (aTier != bTier) return aTier < bTier;
-
-    // 3) Then the finer kind (exe before lnk), name length and alphabetical.
     Kind ak = classify(aName, aIsDir);
     Kind bk = classify(bName, bIsDir);
     if (ak != bk) return static_cast<int>(ak) < static_cast<int>(bk);

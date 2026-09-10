@@ -344,11 +344,8 @@ void FileSearchService::rankResults(const std::wstring& search, std::vector<Resu
             return file_rank::betterPathMatch(a.title, a.isDirectory, a.matchTier,
                                               b.title, b.isDirectory, b.matchTier);
         }
-        if (a.launchable != b.launchable) return a.launchable;
-        if (a.matchTier != b.matchTier) return a.matchTier < b.matchTier;
-        if (a.kind != b.kind) return static_cast<int>(a.kind) < static_cast<int>(b.kind);
-        if (a.title.size() != b.title.size()) return a.title.size() < b.title.size();
-        return winutil::lessIgnoreCase(a.title, b.title);
+        return file_rank::betterNameMatch(a.title, a.isDirectory, a.matchTier,
+                                          b.title, b.isDirectory, b.matchTier);
     });
 }
 

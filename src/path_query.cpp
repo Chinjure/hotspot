@@ -34,6 +34,19 @@ void advanceThroughSegment(const wchar_t* text, size_t len,
     }
 }
 
+// True when `path` is the directory named by the query's leading segments and
+// nothing deeper: the folder "C:\Windows" is the one whose parent is "C:\",
+// while "C:\ProgramData\Microsoft\Windows" is a different folder that merely
+// shares the name. A trailing separator is ignored on both sides, so "C:" and
+// "C:\" are the same place ("C:\Windows\" names the folder under "C:\").
+bool isExactlyPrefixDir(const std::wstring& path, const std::wstring& foldedLeadPrefix) {
+    std::wstring folded = winutil::foldString(path);
+    std::wstring expect = foldedLeadPrefix;
+    while (!folded.empty() && folded.back() == L'\\') folded.pop_back();
+    while (!expect.empty() && expect.back() == L'\\') expect.pop_back();
+    return !expect.empty() && folded == expect;
+}
+
 // True when `path` is the directory `foldedPrefix` itself or sits below it.
 // `foldedPrefix` may or may not end with a separator.
 bool isUnderPrefix(const std::wstring& path, const std::wstring& foldedPrefix) {
@@ -138,7 +151,7 @@ Match scorePath(const std::wstring& parentPath, const std::wstring& name, bool i
         }
         // "X:\dir\": the folder itself, or anything inside it.
         if (isDir && winutil::equalsIgnoreCase(name, query.lastSegment()) &&
-            isUnderPrefix(parentPath, query.foldedLeadPrefix)) {
+            isExactlyPrefixDir(parentPath, query.foldedLeadPrefix)) {
             return Match::NameExact;
         }
         return isUnderPrefix(parentPath, query.foldedDirPrefix) ? Match::Descendant : Match::None;

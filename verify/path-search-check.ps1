@@ -1,7 +1,8 @@
 # End-to-end check for path search ("\" triggers path mode):
 #   * path queries find files and folders by location
-#   * result order is exe/lnk > folder > other files
-#   * name search (no separator) keeps its old ordering
+#   * the better path match always comes first, and inside one match tier the
+#     order is exe/lnk > folder > other files
+#   * name search (no separator) keeps working
 #
 # Runs the real publish\hotspot-cpp.exe in CLI mode, so it needs no GUI focus.
 # Usage: powershell -ExecutionPolicy Bypass -File verify\path-search-check.ps1
@@ -54,7 +55,10 @@ function Invoke-Search([string[]]$Mode, [string]$query, [string]$logPath) {
     Remove-Item $logPath -ErrorAction SilentlyContinue
     & $Exe @Mode $query | Out-Null
     if (!(Test-Path $logPath)) { throw "no log written: $logPath (query: $query)" }
-    return Get-Content $logPath
+    # The log is UTF-8 (and carries Chinese subtitles), so it must not be read
+    # through the ANSI default: a mangled full-width space swallows the " | "
+    # separator and every line stops parsing.
+    return Get-Content $logPath -Encoding UTF8
 }
 
 function Get-Hits([string[]]$lines) {
@@ -75,23 +79,50 @@ function Get-Hits([string[]]$lines) {
 
 function Get-Kinds([object[]]$hits) { return ($hits | ForEach-Object { $_.Kind }) -join "," }
 
-# The requirement as an invariant: exe/lnk first, then folders, then plain files.
-function Assert-GroupOrder([string]$kinds, [string]$what) {
-    $group = @{ exe = 0; lnk = 0; dir = 1; file = 2 }
-    $previous = -1
-    $ok = $true
-    foreach ($kind in $kinds.Split(",")) {
-        if (-not $kind) { continue }
-        $current = $group[$kind]
-        if ($current -lt $previous) { $ok = $false }
-        $previous = $current
+# The requirement as an invariant: the better match always comes first, and only
+# inside one match class does the kind matter -- exe/lnk, then folders, then
+# plain files in path mode (file_rank::betterPathMatch), but exe/lnk, then plain
+# files, then folders in name mode (file_rank::betterNameMatch). Exact name (0)
+# and exact stem (1) are one class -- see file_rank::qualityClass.
+function Get-Class([int]$tier) { if ($tier -le 1) { return 0 } return $tier }
+
+$KindRank = @{ exe = 0; lnk = 1; file = 2; dir = 3 }
+$LaunchRank = @{ exe = 0; lnk = 0; file = 1; dir = 1 }
+$PathKindGroup = @{ exe = 0; lnk = 0; dir = 1; file = 2 }
+
+# The comparator's own key, in the comparator's own order:
+#   path mode: class, kind group (exe/lnk, folder, file), tier, kind
+#   name mode: class, launchable, tier, kind
+function Get-SortKey([object]$hit, [string]$mode) {
+    $class = Get-Class $hit.Tier
+    if ($mode -eq "name") {
+        return ,@($class, $LaunchRank[$hit.Kind], $hit.Tier, $KindRank[$hit.Kind])
     }
-    Assert $ok "$what ($kinds)"
+    return ,@($class, $PathKindGroup[$hit.Kind], $hit.Tier, $KindRank[$hit.Kind])
+}
+
+function Assert-Order([object[]]$hits, [string]$what, [string]$mode = "path") {
+    $ok = $true
+    $detail = ""
+    for ($i = 1; $i -lt $hits.Count; $i++) {
+        $previous = Get-SortKey $hits[$i - 1] $mode
+        $current = Get-SortKey $hits[$i] $mode
+        $worse = $false
+        for ($k = 0; $k -lt $previous.Count; $k++) {
+            if ($previous[$k] -ne $current[$k]) { $worse = $previous[$k] -gt $current[$k]; break }
+        }
+        if ($worse) {
+            $ok = $false
+            $detail = " ($($hits[$i - 1].Kind) tier=$($hits[$i - 1].Tier) after $($hits[$i].Kind) tier=$($hits[$i].Tier))"
+            break
+        }
+    }
+    Assert $ok "$what$detail"
 }
 
 New-Fixtures
 
-# ---- 1. Live scan, absolute path query: exe/lnk > folder > file, same tier ----
+# ---- 1. Live scan, absolute path query: better tier first, kind inside a tier ----
 $query = "$FixtureRoot\alpha\beta\target"
 $lines = Invoke-Search @("--live-search") $query $liveLog
 $hits = Get-Hits $lines
@@ -104,7 +135,11 @@ Assert ($names -contains "target-dir") "live path query found the folder target-
 Assert ($names -contains "target.md") "live path query found target.md"
 $order = Get-Kinds $hits
 Write-Host "      order: $order"
-Assert ($order.StartsWith("exe,lnk,dir,file")) "order is exe, lnk, folder, file (got $order)"
+# target.exe/.lnk/.md match exactly (stem), target-dir only by prefix, so the
+# three exact hits come first -- exe, lnk, then the plain file -- and the folder
+# follows on its worse tier.
+Assert ($order.StartsWith("exe,lnk,file,dir")) "exact-name hits before the prefix folder (got $order)"
+Assert-Order $hits "live path query keeps match quality first"
 
 # ---- 2. Live scan, trailing separator: folder itself + contents ----
 $query = "$FixtureRoot\alpha\beta\"
@@ -113,9 +148,10 @@ $hits = Get-Hits $lines
 $kinds = Get-Kinds $hits
 Write-Host "      order: $kinds"
 Assert ($hits.Count -ge 4) "trailing path query returned >= 4 hits (got $($hits.Count))"
-$firstFile = $kinds.IndexOf("file")
-$firstDir = $kinds.IndexOf("dir")
-Assert ($firstDir -ge 0 -and ($firstFile -lt 0 -or $firstDir -lt $firstFile)) "trailing query lists folders before plain files ($kinds)"
+# Everything found here is a descendant of the named folder (one tier), so the
+# kind order inside that tier decides: exe/lnk, then the folder, then plain files.
+Assert ($kinds.StartsWith("exe,lnk,dir,file")) "trailing query keeps kind order inside one tier ($kinds)"
+Assert-Order $hits "trailing query keeps match quality first"
 
 # ---- 3. Index scan, trailing separator on a real indexed directory ----
 $indexTarget = "$workspaceRoot\"
@@ -125,7 +161,7 @@ $kinds = Get-Kinds $hits
 Write-Host "      order: $kinds"
 Assert (($lines -join "`n") -match "\(path mode\)") "index search reports path mode"
 Assert ($hits.Count -ge 2) "index path query returned hits (got $($hits.Count))"
-Assert-GroupOrder $kinds "index path query keeps exe/lnk, folder, file group order"
+Assert-Order $hits "index path query keeps match quality first inside one tier"
 $repoPattern = '^' + [regex]::Escape($workspaceRoot) + '(\\|$)'
 $outside = @($hits | Where-Object { $_.Path -notmatch $repoPattern })
 Assert ($outside.Count -eq 0) "every hit of the repo listing is inside the repo"
@@ -139,14 +175,15 @@ $leaks = @($hits | Where-Object { $_.Path -notmatch '^C:\\Windows(\\|$)' })
 Assert ($leaks.Count -eq 0) "every C:\Windows\ hit is inside C:\Windows (leaks: $(($leaks | ForEach-Object { $_.Path }) -join '; '))"
 $kinds = Get-Kinds $hits
 Write-Host "      order: $kinds"
-Assert ($kinds -match "^(exe|lnk)") "C:\Windows\ lists launchable hits first ($kinds)"
-Assert-GroupOrder $kinds "C:\Windows\ keeps exe/lnk, folder, file group order"
+Assert ($hits[0].Name -eq "Windows" -and $hits[0].Kind -eq "dir") "C:\Windows\ lists the named folder first ($kinds)"
+Assert-Order $hits "C:\Windows\ keeps match quality first inside one tier"
 
-# ---- 5. Regression: plain name search is unchanged ----
+# ---- 5. Plain name search stays in name mode and still returns hits ----
 $lines = Invoke-Search @("--index-search") "hotspot" $indexLog
 $hits = Get-Hits $lines
 Assert (($lines -join "`n") -match "\(name mode\)") "plain name search stays in name mode"
 Assert ($hits.Count -ge 1) "plain name search still returns hits (got $($hits.Count))"
+Assert-Order $hits "plain name search keeps match quality first inside one tier" "name"
 
 Write-Host ""
 if ($failures -eq 0) {
