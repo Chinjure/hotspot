@@ -2,6 +2,22 @@
 build/
 publish/
 publish-test/
+artifacts/
+
+# MSVC intermediate/build outputs (the build script stays tracked)
+*.obj
+*.res
+*.pdb
+*.ilk
+*.exp
+*.lib
+cpp/build/*
+!cpp/build/_build.cmd
+!cpp/build/README.md
+
+# C# build outputs
+[Bb]in/
+[Oo]bj/
 
 # Visual Studio / editor
 .vs/
