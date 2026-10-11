@@ -1,16 +1,12 @@
 # Build outputs
-bin/
-obj/
+build/
 publish/
 publish-test/
-artifacts/
 
-# Visual Studio / Rider
+# Visual Studio / editor
 .vs/
 *.user
 *.suo
-
-# OS / editor
-.DS_Store
 Thumbs.db
-*.swp
+.DS_Store
+verify/out/

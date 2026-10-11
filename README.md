@@ -1,178 +1,112 @@
-# hotspot
+# hotspot (C++/Win32 原生版)
 
-> 原 PowerToys Run Standalone 已更名为 **hotspot**（Everything 式 NTFS 全盘文件搜索启动器）
+这是 hotspot 启动器的 **C++ 原生重写版**：仅保留文件搜索 + NTFS $MFT 全盘索引 +
+主窗口 + 全局热键 + 托盘 + 设置 + 历史 + CLI 模式，界面使用 Win32 + Direct2D/DirectWrite。
+构建只依赖 **Windows SDK + MSVC（Visual Studio C++ 工具集）**，通过 `build.ps1` 调用
+`vswhere → vcvarsall → cl/link/rc`，零第三方依赖。
 
-从 [microsoft/PowerToys](https://github.com/microsoft/PowerToys)（MIT License）的
-PowerToys Run（Launcher）功能中提取、独立化的快速启动器。
+## 构建
 
-目标是：**一个单独的 Windows EXE**，双击即用，不依赖 PowerToys 主程序。
-默认全局热键：`Alt+Space`。
+在 Windows PowerShell 中：
 
-> 本项目独立封装了 PowerToys Run 的交互模型与插件体系：
-> 主窗口（`PowerLauncher`）→ 插件基础设施（`Wox.Plugin`/`IPlugin`）→ 内置插件。
-> 由于原版设置界面寄生在 PowerToys Settings 应用中，本项目额外实现了一个轻量设置窗口。
-
-## 功能
-
-- 全局热键呼出/隐藏（默认 `Alt+Space`，可在设置中修改）
-- 边框透明、TopMost、居中显示的启动器窗口
-- **托盘图标（不占任务栏）**：托盘常驻，左键/“显示启动器”找回窗口，
-  “设置”打开设置，“退出”真正退出；全局热键（默认 `Alt+Space`）呼出/隐藏
-- 输入即搜索、`↑↓` 选择、`Enter` 执行、`Esc` 隐藏
-- **结果交互**：左键单击 = 打开文件（默认程序）/打开文件夹；
-  右键 = 打开文件 / **打开所在路径** / 复制完整路径
-- **Everything 式文件搜索**：直接输入 `the church` 这类纯文本也会搜全盘文件
-  （无需 `fs` / `?` 前缀；设置里可关闭）；结果按“精确 > 前缀 > 包含”排序，
-  文件夹与所有匹配文件都能出现在列表里
-- 结果可复制到剪贴板（计算器、时间、环境变量等）
-- 近期使用历史（History 插件）
-- 简易设置窗口：热键、开机自启、搜索引擎、插件启停
-- 配置：`%LocalAppData%\hotspot\settings.json`
-- 历史：`%LocalAppData%\hotspot\history.json`
-
-## 内置插件
-
-| 插件 | 用法示例 | 对应 PowerToys Run 插件 |
-| --- | --- | --- |
-| Program | `notepad` | Microsoft.Plugin.Program |
-| Web Search | `?? PowerToys Run` | Community.PowerToys.Run.Plugin.WebSearch |
-| Calculator | `1+2*3` 或 `= sqrt(16)` | Microsoft.Plugin.Calculator |
-| Unit Converter | `u 100 km to mi` / `100kg to lb` | Community.PowerToys.Run.Plugin.UnitConverter |
-| Window Walker | `< notepad` / `ww notepad` | Microsoft.Plugin.WindowWalker |
-| File Search / NTFS $MFT | `? report.docx` / `fs report.docx` | Microsoft.Plugin.Indexer（重写为 NTFS MFT 全盘索引） |
-| Folder | `folder desktop` | Microsoft.Plugin.Folder |
-| Registry | `: Notepad` / `reg Notepad` | Microsoft.Plugin.Registry |
-| Process Killer | `kill notepad` | Microsoft.Plugin.ProcessKiller（历史内置） |
-| Shell | `> dir C:\` | Microsoft.Plugin.Shell |
-| Windows Settings | `$ display` / `win display` | Microsoft.Plugin.WindowsSettings |
-| Time & Date | `) time` / `time` / `date` | Microsoft.Plugin.TimeDate |
-| Environment Variable | `env PATH` | Microsoft.Plugin.EnvironmentVariable（历史内置） |
-| URI | `// https://github.com` / `uri https://github.com` | Microsoft.Plugin.Uri |
-| System | `system` / `uptime` | Microsoft.Plugin.System |
-| History | `!!` / `history` | Microsoft.Plugin.History |
-| ValueGenerator | `# guid` / `# md5 hello` / `# b64 hello` | Community.PowerToys.Run.Plugin.ValueGenerator |
-| Windows Terminal | `_` / `_ dir` | Microsoft.Plugin.WindowsTerminal |
-| OneNote | `o:` / `o: notes` | Microsoft.Plugin.OneNote |
-| PowerToys | `@` / `@ color` | Microsoft.Plugin.PowerToys |
-| Service | `!` / `! start <name>` | Microsoft.Plugin.Service |
-| VSCode Workspaces | `vsc <text>` | Community.PowerToys.Run.Plugin.VSCodeWorkspaces |
-
-插件可以在设置窗口里逐个开关。
-
-## 构建（win-x64 单文件 EXE）
-
-依赖：.NET 8 SDK（Windows/Linux 均可交叉编译 WPF，
-项目已启用 `EnableWindowsTargeting=true`）。
-未安装 SDK 时，可在 Windows PowerShell 中运行
-`powershell -ExecutionPolicy Bypass -File scripts\install-dotnet.ps1`
-（安装到用户目录，无需管理员权限）。
-
-```bash
-# 方式 1：PowerShell（Windows）
-./build/build.ps1
-
-# 方式 2：bash（Linux/WSL）
-./build/build.sh
+```powershell
+.\build.ps1
 ```
 
 产物：
 
 ```
-publish/hotspot.exe   # 单文件、自包含 win-x64
+publish\hotspot-cpp.exe   # 原生 PE32+ GUI x64
 ```
 
-也可以手动执行：
+要求：已安装 Visual Studio 的“使用 C++ 的桌面开发”工作负载（MSVC x64 + Windows SDK）。
 
-```bash
-dotnet publish src/PowerToysRunStandalone/PowerToysRunStandalone.csproj \
-  -c Release -r win-x64 --self-contained true \
-  -p:PublishSingleFile=true \
-  -p:IncludeNativeLibrariesForSelfExtract=true \
-  -p:EnableCompressionInSingleFile=true \
-  -o publish
+## 功能
+
+- 文件搜索：`fs <name>`、`? <name>`、无前缀 Everything 式搜索（设置可关）
+- 路径搜索：查询里出现 `\`（`/` 等价）即按路径搜索，例如
+  `C:\Users\me\Desktop\proj`、`src\components\button.tsx`；末尾带 `\`
+  表示列出该文件夹及其内容；绝对路径按字面前缀限定范围，相对路径允许
+  省略中间目录。结果排序**先看路径匹配度**（精确名/精确茎 > 前缀 > 包含 >
+  子项），同一匹配档内才是 **exe/lnk > 文件夹 > 其它文件**
+- NTFS $MFT 全盘索引：优先 `$MFT` + SeBackupPrivilege，失败自动 walk 回退
+- 索引持久化与 C# 版**二进制兼容**：直接复用
+  `%LocalAppData%\hotspot\ntfs\C-index.dat / C-meta.json / C-delta.json`
+- USN Journal 增量更新（管理员权限时），Delta overlay 合并
+- 索引外实时搜索（默认 800ms 时限，300–5000ms 可调）
+- 多盘公平配额 + 相关度排序：**名字匹配优先于文件类型**（精确名/精确茎 >
+  前缀 > 包含；同档内才比 exe/lnk > 文件 > 文件夹；短名优先），所以搜 `clock`
+  时完全名为 `clock` 的文件夹排在 `Clock Widget.lnk` 之前
+- 无边框、圆角、TopMost 启动器窗口（Direct2D 自绘结果列表）
+- 全局热键（默认 `Alt+Space`，可修改）
+- 托盘图标：左键显示启动器，右键 显示/设置/退出
+- 设置窗口：热键、开机自启、启动时显示、搜索引擎（兼容字段）、
+  NTFS 索引开关/实时搜索/无前缀搜索/时限/重建、File Search 与 History 插件开关
+- 历史：执行结果写入 `%LocalAppData%\hotspot\history.json`；`history` / `hist` / `!!` 显示最近 30 条
+- 数据目录与旧版自动迁移到 `%LocalAppData%\hotspot`
+
+## CLI 模式
+
+日志写入 `%LocalAppData%\hotspot\ntfs\`（与原版同名日志文件）：
+
+```
+hotspot-cpp.exe --index-build [C]
+hotspot-cpp.exe --index-search <name|path>   # 含 \ 时按路径搜索
+hotspot-cpp.exe --index-status
+hotspot-cpp.exe --live-search <name|path>    # 含 \ 时按路径搜索
+hotspot-cpp.exe --settings       # GUI：启动后打开设置
+hotspot-cpp.exe --stay           # GUI：保持窗口（截图/调试用，不失焦隐藏）
 ```
 
-## 文件搜索：NTFS $MFT 全盘索引
+## 验证
 
-`? <name>` 与 `fs <name>` 不再只遍历桌面/文档等常用目录，而是直接重建
-NTFS 记录索引（与 [undex](../undex/) 的查询原理一致）：
-
-1. **全量扫描**：优先以 SeBackupPrivilege 打开 `\\?\C:\$MFT`，流式解析每条
-   FILE 记录（`0x30 FILE_NAME` 取文件名/父目录引用/大小/时间，`0x80 DATA`
-   判定普通文件），通过父引用链重建完整路径——覆盖卷上全部文件与目录。
-2. **walk 回退**：Win11 24H2+ 管理员保护或普通权限打不开 `$MFT` 时，自动
-   降级为并行目录递归（记录每条目的 NTFS FileId），无管理员也能完整建索引。
-3. **持久索引**：索引存于 `%LocalAppData%\hotspot\ntfs\`
-   （`C-meta.json` / `C-index.dat` / `C-delta.json`），首次启动后台构建，
-   之后启动直接内存映射加载，搜索为全盘毫秒级。
-4. **USN 增量**：以管理员运行时读取 `FSCTL_READ_USN_JOURNAL` 追加增量
-   （新增/删除/改名/更新），查询时按 overlay 合并；无权限时自动跳过。
-5. **索引外实时搜索**：每次 `fs / ?` 查询还会做一次限时（默认 800ms，可在设置
-   调整）的实时目录扫描，合并索引未覆盖的文件——新建文件、未建索引的卷、因
-   ACL 跳过的路径都能立刻找到；结果标注「实时命中（索引外）」。不需要时可在
-   设置里关闭。
-6. **范围**：默认索引所有固定 NTFS 卷（C:、D: …），设置窗口可查看每个卷的
-   状态并一键"立即重建索引"；也可取消勾选「启用全盘文件搜索」退回常用目录遍历。
-   多盘结果按“每盘公平配额”混排，大容量的 C: 不会挤掉 D: 的结果。
-7. **Everything 式查询**：默认开启「无前缀直接搜索全盘文件」，直接输入文件名
-   即可命中（`the church` → `D:\CloudMusic\download\VipSongsDownload\The Church`
-   文件夹及其全部 70 个文件）；结果按“精确名 > 前缀 > 包含”排序，
-   文件夹排在完全匹配的顶部。
+```powershell
+.\verify\path-query-test.ps1     # 路径匹配与排序单元测试（毫秒级，不需要索引）
+.\verify\path-search-check.ps1   # 端到端：真实 exe + 临时夹具 + 真实索引，检查顺序与范围
+.\verify\focus-keys.ps1          # GUI：焦点/键盘回归（点空白、右键菜单后 Esc 与输入仍有效）
+.\verify\capture.ps1 -Mode search -Query "C:\Users\me\Desktop" `
+                     -Out artifacts\cpp-path-search.png
+```
 
 ## 源码结构
 
 ```
 hotspot/
-├── src/PowerToysRunStandalone/
-│   ├── App.xaml(.cs)              # 启动/装配（对应 PowerLauncher App）
-│   ├── Infrastructure/
-│   │   ├── PluginTypes.cs         # IPlugin/IResult/Query/PluginManager
-│   │   ├── SettingsService.cs     # JSON 配置（替代 PowerToys Settings）
-│   │   ├── HotkeyService.cs       # RegisterHotKey 全局热键
-│   │   ├── HistoryService.cs      # 近期结果历史
-│   │   └── Ntfs/                  # NTFS $MFT 全盘索引
-│   │       ├── NativeMethods.cs   # Win32 P/Invoke（$MFT/USN/特权/遍历）
-│   │       ├── NtfsScanner.cs     # $MFT 记录解析 + walk 回退
-│   │       ├── NtfsIndexWriter.cs # 紧凑二进制索引写入
-│   │       ├── NtfsIndex.cs       # 内存映射搜索/全路径重建/delta overlay
-│   │       ├── UsnUpdater.cs      # USN Journal 增量更新
-│   │       └── NtfsIndexService.cs# 后台建索引/加载/搜索编排
-│   ├── Plugins/                   # 内置插件（每个插件一个文件）
-│   └── UI/
-│       ├── MainWindow.xaml(.cs)   # 启动器主窗口
-│       └── SettingsWindow.xaml(.cs)
-├── build/build.ps1
-├── build/build.sh
-├── LICENSE
-└── NOTICE.md
+├── build.ps1
+├── README.md
+├── verify/                          # 验证脚本（单元测试 / 端到端 / 截图）
+│   ├── path_query_test.cpp          # 路径匹配 + 排序单元测试
+│   ├── path-query-test.ps1          # 编译并运行上面的单元测试
+│   ├── path-search-check.ps1        # 端到端路径搜索检查
+│   └── capture.ps1                  # GUI 截图
+└── src/
+    ├── main.cpp / app.{h,cpp}        # WinMain、GUI/CLI 分派
+    ├── json.{h,cpp}                  # 最小 JSON（UTF-8，兼容 .NET 序列化）
+    ├── settings.{h,cpp}              # settings.json + HKCU Run 自动启动
+    ├── history.{h,cpp}               # history.json
+    ├── hotkey.{h,cpp}                # RegisterHotKey
+    ├── tray.{h,cpp}                  # Shell_NotifyIcon
+    ├── winutil.{h,cpp}               # 路径/编码/字符串/大小写折叠工具
+    ├── path_query.{h,cpp}            # \ 触发的路径查询解析与匹配分级
+    ├── file_rank.{h,cpp}             # 结果排序（名字模式 / 路径模式）
+    ├── file_search.{h,cpp}           # fs/?/无前缀 + 路径搜索 + 实时兜底 + 历史
+    ├── ui/
+    │   ├── main_window.{h,cpp}       # Direct2D 启动器窗口
+    │   ├── settings_window.{h,cpp}   # Win32 设置窗口
+    │   ├── resource.h / app.rc / app.manifest
+    └── ntfs/
+        ├── ntfs_types.h
+        ├── ntfs_win32.{h,cpp}        # Win32 原生封装
+        ├── ntfs_scanner.{h,cpp}      # $MFT / walk 扫描
+        ├── ntfs_index_writer.{h,cpp} # 兼容二进制索引写入
+        ├── ntfs_index.{h,cpp}        # 内存映射搜索/路径重建/Delta
+        ├── usn_updater.{h,cpp}       # USN Journal 增量
+        └── ntfs_service.{h,cpp}      # 后台编排/状态/CLI
 ```
 
-## 与 PowerToys 源码的映射
+## 与 C# 版的关系
 
-- 主窗口/查询管线：`src/modules/launcher/PowerLauncher/` 与
-  `src/modules/launcher/PluginInfrastructure/`
-- 插件接口：`src/modules/launcher/Wox.Plugin/`（`IPlugin`、`Result`、`Query`）
-- 内置插件：`src/modules/launcher/Plugins/`
-- 模块文档：`doc/devdocs/modules/launcher/architecture.md`
-
-## 验证
-
-```powershell
-# 冒烟测试：启动 exe 并确认 8 秒内不崩溃
-.\scripts\smoke.ps1
-
-# 视觉捕获（可选参数 --stay 防止失焦自动隐藏）
-.\scripts\capture.ps1        # 空窗口截图
-.\scripts\capture-search.ps1 # 输入计算表达式后截图
-```
-
-## 系统要求
-
-- Windows 10 1809+ / Windows 11（x64）
-- 无 PowerToys 依赖；首次运行自动创建配置
-- 单文件 EXE 已包含 .NET 运行时（自包含）
-
-## License
-
-PowerToys 使用 MIT License。本项目基于 PowerToys 的源码与架构做独立封装，
-保留原始版权声明，详见 [LICENSE](LICENSE) 与 [NOTICE.md](NOTICE.md)。
+- C++ 版不会删除 C# 版源码；两者并存，`cpp/` 为独立原生工程。
+- 数据文件格式保持一致：settings.json、history.json、`X-meta.json`、
+  `X-delta.json`，以及 `X-index.dat`（`PRSIDX01` 头 + 40B 记录 + UTF-16LE 名字区）。
+- 本版暂不包含 C# 版的其余 21 个插件（计算器/Web 搜索/窗口切换等）。
