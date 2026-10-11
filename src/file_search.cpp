@@ -367,9 +367,22 @@ void FileSearchService::liveSearch(const std::wstring& search, int max, std::vec
     auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(timeoutMs);
     PathSet seen;
 
-    for (const auto& root : scanRoots(pathQuery, true)) {
+    // The roots are ordered user folders first, then drives, and the first root
+    // used to receive the entire budget. On a machine whose C: holds a million
+    // entries that made every later root unreachable, so a folder created on D:
+    // could never be found live. Each remaining root now only gets a fair slice
+    // of the time that is left, so every drive contributes within one budget.
+    std::vector<std::wstring> roots = scanRoots(pathQuery, true);
+    for (size_t i = 0; i < roots.size(); i++) {
         if (static_cast<int>(out.size()) >= max) break;
-        enumerateTree(root, 256,
+        if (std::chrono::steady_clock::now() >= deadline) break;
+        auto now = std::chrono::steady_clock::now();
+        auto remaining = std::chrono::duration_cast<std::chrono::milliseconds>(deadline - now).count();
+        auto slice = std::chrono::milliseconds(
+            std::max<int64_t>(25, remaining / static_cast<int64_t>(roots.size() - i)));
+        auto rootDeadline = std::min(deadline, now + slice);
+
+        enumerateTree(roots[i], 256,
                       [&](const std::wstring& path, const std::wstring& parent,
                           const std::wstring& name, bool isDir) -> bool {
                           if (static_cast<int>(out.size()) >= max) return false;
@@ -386,7 +399,7 @@ void FileSearchService::liveSearch(const std::wstring& search, int max, std::vec
                           out.back().matchTier = tier;
                           return static_cast<int>(out.size()) < max;
                       },
-                      cancel, deadline);
+                      cancel, rootDeadline);
     }
 }
 

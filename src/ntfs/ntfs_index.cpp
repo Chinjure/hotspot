@@ -109,6 +109,12 @@ NtfsIndex::NtfsIndex(const std::wstring& indexPath, const NtfsIndexMeta& meta, c
 
     if (!delta.records.empty()) {
         delta_ = std::make_unique<DeltaState>(DeltaState::build(delta.records));
+        // Empty deltas are left unlogged: a quiet drive produces them on every
+        // start, while a non-empty one is the interesting case (an epoch
+        // mismatch drops the whole overlay silently).
+        winutil::debugLog(L"delta loaded " + std::wstring(1, meta_.drive) + L": " +
+                          winutil::formatInt(static_cast<int64_t>(delta.records.size())) + L" 条, added=" +
+                          winutil::formatInt(static_cast<int64_t>(delta_->added.size())));
     }
 }
 
@@ -126,7 +132,9 @@ std::unique_ptr<NtfsIndex> NtfsIndex::tryLoad(const std::wstring& indexPath,
     }
 }
 
-NtfsIndex::~NtfsIndex() {
+NtfsIndex::~NtfsIndex() { dispose(); }
+
+void NtfsIndex::dispose() {
     if (base_) {
         UnmapViewOfFile(base_);
         base_ = nullptr;

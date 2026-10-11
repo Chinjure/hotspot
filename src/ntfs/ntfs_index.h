@@ -20,6 +20,12 @@ public:
                                               const DeltaData& delta);
     ~NtfsIndex();
 
+    // Releases the mapping and the file handle. A rebuild has to call this
+    // before replacing the index file: a live mapping of the target makes
+    // MoveFileExW fail with ERROR_ACCESS_DENIED, which used to leave every
+    // rebuild silently failing while the on-disk snapshot stayed stale.
+    void dispose();
+
     NtfsIndex(const NtfsIndex&) = delete;
     NtfsIndex& operator=(const NtfsIndex&) = delete;
 

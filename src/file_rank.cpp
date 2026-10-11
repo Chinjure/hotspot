@@ -126,4 +126,34 @@ bool betterPathMatch(const std::wstring& aName, bool aIsDir, int aTier,
     return winutil::lessIgnoreCase(aName, bName);
 }
 
+namespace {
+
+// Path-search grouping: 0 = exe/lnk, 1 = folder, 2 = other file.
+int pathGroup(const std::wstring& name, bool isDir) {
+    Kind kind = classify(name, isDir);
+    if (isLaunchable(kind)) return 0;
+    return kind == Kind::Directory ? 1 : 2;
+}
+
+} // namespace
+
+bool betterPathMatch(const std::wstring& aName, bool aIsDir, int aTier,
+                     const std::wstring& bName, bool bIsDir, int bTier) {
+    // 1) Executables and shortcuts stay on top, folders come right after them.
+    int ga = pathGroup(aName, aIsDir);
+    int gb = pathGroup(bName, bIsDir);
+    if (ga != gb) return ga < gb;
+
+    // 2) Inside one group the path match tier decides.
+    if (aTier != bTier) return aTier < bTier;
+
+    // 3) Then the finer kind (exe before lnk), name length and alphabetical.
+    Kind ak = classify(aName, aIsDir);
+    Kind bk = classify(bName, bIsDir);
+    if (ak != bk) return static_cast<int>(ak) < static_cast<int>(bk);
+
+    if (aName.size() != bName.size()) return aName.size() < bName.size();
+    return winutil::lessIgnoreCase(aName, bName);
+}
+
 } // namespace file_rank

@@ -37,6 +37,19 @@ bool hasArg(const std::vector<std::wstring>& args, const std::wstring& name) {
     return false;
 }
 
+// Elevated processes are the only ones that can open \\.\C: for the USN journal
+// and $MFT, so every log line about indexing wants this bit next to it.
+bool isElevated() {
+    HANDLE token = nullptr;
+    if (!OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &token)) return false;
+    TOKEN_ELEVATION elevation{};
+    DWORD size = sizeof(elevation);
+    bool elevated = GetTokenInformation(token, TokenElevation, &elevation, sizeof(elevation), &size) &&
+                    elevation.TokenIsElevated != 0;
+    CloseHandle(token);
+    return elevated;
+}
+
 std::wstring argAfter(const std::vector<std::wstring>& args, const std::wstring& name) {
     for (size_t i = 0; i + 1 < args.size(); i++) {
         if (winutil::equalsIgnoreCase(args[i], name)) return args[i + 1];
@@ -72,6 +85,27 @@ std::wstring describeHit(const std::wstring& name, const std::wstring& path, fil
 }
 
 int runCli(const std::vector<std::wstring>& args) {
+    // Autostart only touches the task/Run entry, so it runs (and returns)
+    // before any index is mapped: it is also the repair entry point when the
+    // registered start path is missing or wrong.
+    if (hasArg(args, L"--autostart")) {
+        std::wstring mode = argAfter(args, L"--autostart");
+        if (mode.empty()) {
+            winutil::debugLog(L"autostart status: " + std::wstring(autostartEnabled() ? L"on" : L"off") +
+                              (isElevated() ? L" [elevated]" : L" [not elevated]"));
+            return 0;
+        }
+        bool enable = mode != L"0" && !winutil::equalsIgnoreCase(mode, L"off");
+        wchar_t module[MAX_PATH] = {};
+        GetModuleFileNameW(nullptr, module, MAX_PATH);
+        std::wstring exe = module;
+        bool ok = enable ? applyAutoStart(true, exe) : applyAutoStart(false, exe);
+        winutil::debugLog(L"autostart " + std::wstring(enable ? L"enable" : L"disable") + L" -> " +
+                          std::wstring(ok ? L"OK" : L"FAILED") + L" (" + exe + L")" +
+                          (isElevated() ? L" [elevated]" : L" [not elevated]"));
+        return ok ? 0 : 1;
+    }
+
     bool isCli = hasArg(args, L"--index-build") || hasArg(args, L"--index-search") ||
                  hasArg(args, L"--index-status") || hasArg(args, L"--live-search");
     if (!isCli) return -1;
@@ -170,7 +204,8 @@ int appMain(HINSTANCE instance, const std::wstring& commandLine, int showCmd) {
     // Shell icons (SHGetImageList) and WIC both need COM on this thread.
     HRESULT oleHr = OleInitialize(nullptr);
     std::vector<std::wstring> args = parseArgs(commandLine);
-    winutil::debugLog(L"appMain start, args=" + (args.empty() ? L"(none)" : args[0]));
+    winutil::debugLog(L"appMain start, args=" + (args.empty() ? L"(none)" : args[0]) +
+                      (isElevated() ? L" [elevated]" : L" [not elevated]"));
 
     int cliResult = runCli(args);
     if (cliResult >= 0) {

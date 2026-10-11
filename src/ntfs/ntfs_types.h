@@ -1,5 +1,6 @@
 #pragma once
 
+#include <algorithm>
 #include <cstdint>
 #include <string>
 #include <unordered_map>
@@ -94,21 +95,77 @@ struct DeltaState {
 
     static DeltaState build(const std::vector<DeltaRecord>& records) {
         DeltaState state;
+        // Two facts about the journal drive this fold:
+        //  - records arrive in USN order, so the last record for a file id wins;
+        //  - NTFS reuses file ids, and a close/update record carries no name.
+        // A naive "later record wins" fold therefore renames a brand new file to
+        // whatever last used its id (and a stale delete hides it entirely), so
+        // names are only ever overwritten by a record that actually has one.
         for (const auto& d : records) {
             uint64_t key = d.ref & 0xFFFFFFFFFFFFULL;
+            bool deleted = d.isDirectory ? state.deletedDirectories.count(key) != 0
+                                         : state.deletedFiles.count(key) != 0;
             if (d.op == DeltaOp::Delete) {
-                if (d.isDirectory) state.deletedDirectories.insert(key);
-                else state.deletedFiles.insert(key);
+                if (d.isDirectory) {
+                    state.deletedDirectories.insert(key);
+                    state.dirOverlay.erase(key);
+                } else {
+                    state.deletedFiles.insert(key);
+                    state.fileOverlay.erase(key);
+                }
+                if (deleted) {
+                    // The id is free again; a later create owns it from scratch.
+                    state.added.erase(std::remove_if(state.added.begin(), state.added.end(),
+                                                     [key](const DeltaRecord& r) {
+                                                         return (r.ref & 0xFFFFFFFFFFFFULL) == key;
+                                                     }),
+                                      state.added.end());
+                }
+                continue;
+            }
+
+            if (!deleted) {
+                if (d.isDirectory) state.deletedDirectories.erase(key);
+                else state.deletedFiles.erase(key);
+            }
+
+            auto& overlay = d.isDirectory ? state.dirOverlay[key] : state.fileOverlay[key];
+            bool isNew = overlay.ref == 0;
+            if (isNew || !d.name.empty()) overlay.name = d.name;
+            if (isNew || d.parentRef != 0) overlay.parentRef = d.parentRef;
+            overlay.modifiedTime = d.modifiedTime > 0 ? d.modifiedTime : overlay.modifiedTime;
+            overlay.ref = d.ref;
+            overlay.isDirectory = d.isDirectory;
+            overlay.op = d.op;
+            if (deleted) {
+                // Update for an id whose file is gone: keep the tombstone.
                 continue;
             }
             if (d.op == DeltaOp::Add) {
-                state.added.push_back(d);
-                if (d.isDirectory) state.dirOverlay[key] = d;
-                continue;
+                // Re-point the entry that may already exist for this id, so a
+                // recreated file is listed once, under its current name.
+                bool replaced = false;
+                for (auto& existing : state.added) {
+                    if ((existing.ref & 0xFFFFFFFFFFFFULL) == key) {
+                        existing = d;
+                        if (overlay.name.empty()) existing.name = overlay.name;
+                        replaced = true;
+                        break;
+                    }
+                }
+                if (!replaced) state.added.push_back(d);
             }
-            if (d.isDirectory) state.dirOverlay[key] = d;
-            else state.fileOverlay[key] = d;
         }
+        // Names resolve through the overlay, so every listed entry needs one.
+        state.added.erase(std::remove_if(state.added.begin(), state.added.end(),
+                                         [&state](const DeltaRecord& r) {
+                                             uint64_t key = r.ref & 0xFFFFFFFFFFFFULL;
+                                             const auto& overlay = r.isDirectory
+                                                                       ? state.dirOverlay[key]
+                                                                       : state.fileOverlay[key];
+                                             return r.name.empty() && overlay.name.empty();
+                                         }),
+                          state.added.end());
         return state;
     }
 };

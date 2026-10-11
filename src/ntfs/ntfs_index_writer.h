@@ -31,5 +31,4 @@ private:
     int64_t dirCount_ = 0;
     uint64_t namePosition_ = 0;
     bool opened_ = false;
-    bool committed_ = false;
 };

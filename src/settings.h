@@ -32,5 +32,8 @@ private:
     std::wstring path_;
 };
 
-// Autostart (HKCU Run) helpers used by the settings window.
+// Autostart is a "highest privileges" scheduled task: a Run-key entry would
+// prompt for UAC on every logon now that the launcher requires elevation. The
+// Run key remains only as the fallback when the task cannot be registered.
 bool applyAutoStart(bool enabled, const std::wstring& exePath);
+bool autostartEnabled();

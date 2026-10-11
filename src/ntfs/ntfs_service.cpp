@@ -100,6 +100,9 @@ void NtfsService::initialize() {
             st.hasLastScan = meta.lastScanTimeUtcTicks != 0;
             st.message = L"索引加载完成";
             states_[drive] = st;
+            winutil::debugLog(L"index loaded " + std::wstring(1, drive) + L": " +
+                              winutil::formatInt(st.recordCount) + L" 项 (" + st.source +
+                              L"), nextUsn=" + std::to_wstring(meta.nextUsn));
         } else {
             {
                 std::lock_guard<std::mutex> lock(gate_);
@@ -108,8 +111,32 @@ void NtfsService::initialize() {
                 st.message = L"索引尚未建立";
                 states_[drive] = st;
             }
+            // The load failure reason lives in load-error.log; this line ties it
+            // to the rebuild that follows, so a "silently rebuilt on every
+            // start" drive is visible instead of mysterious.
+            winutil::debugLog(L"index load failed " + std::wstring(1, drive) + L": 转为重建");
             std::thread([this, drive]() { buildDriveCore(drive); }).detach();
         }
+    }
+    // The incremental sweep collects the ready drives once. Loading a large
+    // index takes seconds, so starting the sweep immediately used to run it
+    // against a half-populated map: a drive whose index was still loading got
+    // skipped and silently never received any incremental update at all.
+    constexpr int kMaxLoadTicks = 300; // 30s at 100ms per tick
+    for (int i = 0; i < kMaxLoadTicks; i++) {
+        bool pending = false;
+        {
+            std::lock_guard<std::mutex> lock(gate_);
+            for (const auto& [drive, st] : states_) {
+                (void)drive;
+                if (!st.ready && !st.failed) {
+                    pending = true;
+                    break;
+                }
+            }
+        }
+        if (!pending) break;
+        std::this_thread::sleep_for(std::chrono::milliseconds(100));
     }
     std::thread([this]() { tryUpdateAll(); }).detach();
 }
@@ -202,32 +229,78 @@ void NtfsService::buildDriveCore(wchar_t drive) {
     };
 
     std::wstring mftError;
-    ntfsscanner::scanMft(drive,
-                         [&](const NtfsEntry& e) { writer->append(e); },
-                         progress, cancel, mftError);
+    int64_t mftVisited = ntfsscanner::scanMft(drive,
+                                              [&](const NtfsEntry& e) { writer->append(e); },
+                                              progress, cancel, mftError);
+    int64_t mftRecords = writer->recordCount();
+    // A silent fallback (or a silent failure) is the single hardest thing to
+    // diagnose from the outside, so every build records why it took the path it
+    // took. `volError` matters too: without it "mftError is empty but nothing
+    // was scanned" is unattributable.
+    std::vector<std::wstring> diag;
+    diag.push_back(L"[build] " + winutil::nowIsoLocal() + L" " + std::wstring(1, drive) +
+                   L": 卷信息" + (volError.empty() ? L"OK" : L"失败: " + volError) +
+                   L" 每记录字节=" + std::to_wstring(volumeInfo.bytesPerRecord));
+    diag.push_back(L"[build] $MFT: visited=" + std::to_wstring(mftVisited) +
+                   L" records=" + std::to_wstring(mftRecords) +
+                   L" error=" + (mftError.empty() ? L"(无)" : mftError));
 
-    if (!mftError.empty() || writer->recordCount() == 0) {
+    if (!mftError.empty() || mftRecords == 0) {
         writer.reset(); // deletes temp record/name files
         writer = std::make_unique<NtfsIndexWriter>(indexDirectory_, std::wstring(1, drive));
         meta.source = 1;
         meta.rootRef = ntfsscanner::tryGetRootRef(drive);
         std::wstring walkError;
-        ntfsscanner::walkVolume(drive,
-                                [&](const NtfsEntry& e) { writer->append(e); },
-                                progress, cancel, walkError);
+        int64_t walked = ntfsscanner::walkVolume(drive,
+                                                 [&](const NtfsEntry& e) { writer->append(e); },
+                                                 progress, cancel, walkError);
+        diag.push_back(L"[build] walk 回退: entries=" + std::to_wstring(walked) +
+                       L" rootRef=" + std::to_wstring(meta.rootRef) +
+                       L" error=" + (walkError.empty() ? L"(无)" : walkError));
         if (!walkError.empty()) failure = L"walk 模式失败: " + walkError;
     }
 
     meta.fileCount = writer->fileCount();
     meta.directoryCount = writer->dirCount();
     meta.lastScanTimeUtcTicks = utcNowTicks();
+    diag.push_back(L"[build] 写出: files=" + std::to_wstring(meta.fileCount) +
+                   L" dirs=" + std::to_wstring(meta.directoryCount) +
+                   L" target=" + indexPath(drive));
 
     if (failure.empty()) {
+        // The previously loaded index of this drive is still mapped in this very
+        // process. Windows refuses to replace an index file while a mapping of
+        // it is alive (MoveFileExW -> ERROR_ACCESS_DENIED), so the old mapping
+        // has to go before the commit; anything still holding it would turn
+        // every rebuild into a silent no-op.
+        std::unique_ptr<NtfsIndex> stale;
+        {
+            std::lock_guard<std::mutex> lock(gate_);
+            auto it = indexes_.find(drive);
+            if (it != indexes_.end()) {
+                stale = std::move(it->second);
+                indexes_.erase(it);
+            }
+        }
+        if (stale) stale->dispose();
+        stale.reset();
+
         if (!writer->commit(meta, indexPath(drive))) {
-            failure = L"索引写入失败";
+            // commit() has already deleted its temp file; surface the Win32
+            // reason (a locked target index is the usual one).
+            failure = L"索引写入失败: 无法替换 " + indexPath(drive) + L" (error " +
+                      std::to_wstring(GetLastError()) + L")";
         } else {
             saveMeta(metaPath(drive), meta);
+            diag.push_back(L"[build] commit OK");
         }
+    }
+    if (!failure.empty()) {
+        diag.push_back(L"[build] 失败: " + failure);
+        std::wstring text;
+        for (const auto& line : diag) text += line + L"\r\n";
+        winutil::writeTextFile(winutil::joinPath(indexDirectory_, L"build-error.log"),
+                               winutil::wideToUtf8(text), false);
     }
 
     DeltaData delta;
@@ -270,7 +343,14 @@ void NtfsService::tryUpdateDrive(wchar_t drive) {
     {
         std::lock_guard<std::mutex> lock(gate_);
         auto it = metas_.find(drive);
-        if (it == metas_.end() || indexes_.count(drive) == 0) return;
+        if (it == metas_.end() || indexes_.count(drive) == 0) {
+            // Reached when the drive's index failed to load; without this line
+            // the drive silently drops out of incremental updates.
+            winutil::debugLog(L"usn update 跳过 " + std::wstring(1, drive) +
+                              L": 索引未加载 (meta=" + std::to_wstring(metas_.count(drive)) +
+                              L" index=" + std::to_wstring(indexes_.count(drive)) + L")");
+            return;
+        }
         meta = it->second;
     }
 
@@ -278,6 +358,9 @@ void NtfsService::tryUpdateDrive(wchar_t drive) {
     int64_t nextUsn = 0;
     std::wstring error;
     if (!usn::tryUpdate(indexDirectory_, drive, meta, newRecords, nextUsn, error)) {
+        // "incremental update unavailable" is invisible otherwise: the reason
+        // (no elevation, journal rebuilt, ...) has to survive in a log.
+        winutil::debugLog(L"usn update failed " + std::wstring(1, drive) + L": " + error);
         std::lock_guard<std::mutex> lock(gate_);
         auto it = states_.find(drive);
         if (it != states_.end() && it->second.ready) {
@@ -285,6 +368,9 @@ void NtfsService::tryUpdateDrive(wchar_t drive) {
         }
         return;
     }
+    winutil::debugLog(L"usn update " + std::wstring(1, drive) + L": " +
+                      winutil::formatInt(static_cast<int64_t>(newRecords.size())) + L" 条变更, nextUsn=" +
+                      std::to_wstring(nextUsn));
 
     saveMeta(metaPath(drive), meta);
     DeltaData delta = usn::loadDelta(indexDirectory_, drive, meta.epoch);
@@ -310,6 +396,9 @@ void NtfsService::tryUpdateAll() {
         }
     }
     for (wchar_t d : drives) tryUpdateDrive(d);
+    std::wstring seen;
+    for (wchar_t d : drives) seen += std::wstring(1, d);
+    winutil::debugLog(L"usn sweep done, drives=" + (seen.empty() ? std::wstring(L"(none)") : seen));
 }
 
 std::vector<NtfsDriveState> NtfsService::driveStates() {

@@ -109,16 +109,16 @@ bool NtfsIndexWriter::commit(const NtfsIndexMeta& meta, const std::wstring& inde
         DeleteFileW(tempPath.c_str());
         return false;
     }
-    committed_ = true;
     return true;
 }
 
 void NtfsIndexWriter::cleanup() {
     if (recordsFile_.is_open()) recordsFile_.close();
     if (namesFile_.is_open()) namesFile_.close();
-    if (!committed_) {
-        fs::path dir(directory_);
-        DeleteFileW((dir / (tempPrefix_ + L"-records.tmp")).c_str());
-        DeleteFileW((dir / (tempPrefix_ + L"-names.tmp")).c_str());
-    }
+    // The temp parts are scratch data in both outcomes: after a successful
+    // commit they are already folded into the index, and after a failure they
+    // are garbage. Leaving them behind costs tens of MB per rebuild.
+    fs::path dir(directory_);
+    DeleteFileW((dir / (tempPrefix_ + L"-records.tmp")).c_str());
+    DeleteFileW((dir / (tempPrefix_ + L"-names.tmp")).c_str());
 }

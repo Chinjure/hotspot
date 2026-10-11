@@ -63,4 +63,14 @@ bool betterNameMatch(const std::wstring& aName, bool aIsDir, int aTier,
 bool betterPathMatch(const std::wstring& aName, bool aIsDir, int aTier,
                      const std::wstring& bName, bool bIsDir, int bTier);
 
+// Ordering used when the query is a path (it contains a separator). Priority:
+//   1. launchable (.exe/.lnk/...)   launcher priority, unchanged
+//   2. directories                  "second only to exe/lnk"
+//   3. other files
+//   4. inside one group: path tier, then kind, then shorter name, alphabetical
+// `tier` is the path_query score, so typing "C:\Users\me\Desktop\proj" still
+// puts that exact folder above loose files found deeper in its subtree.
+bool betterPathMatch(const std::wstring& aName, bool aIsDir, int aTier,
+                     const std::wstring& bName, bool bIsDir, int bTier);
+
 } // namespace file_rank

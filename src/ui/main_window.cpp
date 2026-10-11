@@ -21,9 +21,22 @@ namespace {
 
 constexpr int kWidth = 720;
 constexpr int kHeight = 480;
-constexpr int kRowHeight = 64;
 constexpr int kEditId = 100;
 constexpr int kHotkeyId = 0xB00F;
+
+// Text metrics of the row block (Segoe UI line boxes at the sizes used below).
+constexpr float kTitleLineHeight = 22.0f;
+constexpr float kSubtitleLineHeight = 16.0f;
+constexpr float kTitleSubtitleGap = 2.0f;
+// A row holds a one-line 16pt title plus a 12pt subtitle — the full path — that
+// may wrap onto a second line, so the row must be tall enough for two subtitle
+// lines and still keep its margins.
+constexpr int kRowHeight = 72;
+// At most two subtitle lines are laid out per row: the measuring box is a hair
+// taller than two line boxes (so the wrapped second path line never loses its
+// last pixel to rounding) but shorter than three (so a third line cannot fit).
+constexpr float kSubtitleMaxHeight = kSubtitleLineHeight * 2.0f + 2.0f;
+constexpr float kTextLeft = 68.0f;
 
 constexpr float kBg = 0x1F1F23;
 constexpr float kInput = 0x2B2B33;
@@ -688,44 +701,73 @@ void MainWindow::paint() {
             renderTarget_->FillRoundedRectangle(D2D1::RoundedRect(row, 8.0f, 8.0f), selectedBrush_);
         }
 
+        const float rowTop = static_cast<float>(rowY);
+        const float textRight = static_cast<float>(listRect_.right - 170);
+        const float rowMiddle = rowTop + static_cast<float>(kRowHeight) / 2.0f;
+
+        // Measure the subtitle (the full path) before drawing it. A long path
+        // wraps onto a second line and the subtitle box previously had a fixed
+        // one-line height, so that second line was clipped to half its height.
+        // The layout is capped at two lines and its measured height becomes the
+        // drawing box, which keeps a wrapped path fully visible.
+        float subtitleHeight = kSubtitleLineHeight;
+        if (dwriteFactory_ && !item.subtitle.empty()) {
+            IDWriteTextLayout* subtitleLayout = nullptr;
+            if (SUCCEEDED(dwriteFactory_->CreateTextLayout(
+                    item.subtitle.c_str(), static_cast<UINT32>(item.subtitle.size()),
+                    subtitleFormat_, textRight - kTextLeft, kSubtitleMaxHeight, &subtitleLayout)) &&
+                subtitleLayout) {
+                DWRITE_TEXT_METRICS metrics{};
+                if (SUCCEEDED(subtitleLayout->GetMetrics(&metrics)) && metrics.height > 0.0f) {
+                    subtitleHeight = metrics.height;
+                }
+                subtitleLayout->Release();
+            }
+        }
+
+        // Centre the measured title+subtitle block in the row, so a two-line row
+        // and a one-line row share the same middle as the icon column.
+        const float blockHeight = kTitleLineHeight + kTitleSubtitleGap + subtitleHeight;
+        const float blockTop =
+            rowTop + std::max(0.0f, (static_cast<float>(kRowHeight) - blockHeight) / 2.0f);
+        const float subtitleTop = blockTop + kTitleLineHeight + kTitleSubtitleGap;
+
         // Icon column: real shell icon when the row maps to a file/folder,
-        // otherwise the emoji fallback glyph.
+        // otherwise the emoji fallback glyph (both centred on the row middle).
         ID2D1Bitmap* rowIcon = iconCache_ && !item.iconPath.empty()
                                    ? iconCache_->get(item.iconPath)
                                    : nullptr;
         if (rowIcon) {
             const float iconSize = 28.0f;
             float iconLeft = 20.0f + (44.0f - iconSize) / 2.0f;
-            float iconTop = static_cast<float>(rowY) + (static_cast<float>(kRowHeight) - iconSize) / 2.0f - 2.0f;
+            float iconTop = rowMiddle - iconSize / 2.0f;
             renderTarget_->DrawBitmap(rowIcon,
                                       D2D1::RectF(iconLeft, iconTop, iconLeft + iconSize, iconTop + iconSize),
                                       1.0f, D2D1_BITMAP_INTERPOLATION_MODE_LINEAR);
         } else {
             renderTarget_->DrawTextW(item.icon.c_str(), static_cast<UINT32>(item.icon.size()),
                                      iconFormat_,
-                                     D2D1::RectF(20.0f, static_cast<float>(rowY + 14),
-                                                 64.0f, static_cast<float>(rowY + 46)),
+                                     D2D1::RectF(20.0f, rowMiddle - 16.0f, 64.0f, rowMiddle + 16.0f),
                                      secondaryBrush_);
         }
 
         renderTarget_->DrawTextW(item.title.c_str(), static_cast<UINT32>(item.title.size()),
                                  titleFormat_,
-                                 D2D1::RectF(68.0f, static_cast<float>(rowY + 8),
-                                             static_cast<float>(listRect_.right - 170),
-                                             static_cast<float>(rowY + 32)),
+                                 D2D1::RectF(kTextLeft, blockTop, textRight, blockTop + kTitleLineHeight),
                                  fgBrush_, D2D1_DRAW_TEXT_OPTIONS_CLIP);
+        // One extra pixel of box height: DWrite rounds line boxes to whole
+        // pixels, and the last line must not lose its bottom row to that.
         renderTarget_->DrawTextW(item.subtitle.c_str(), static_cast<UINT32>(item.subtitle.size()),
                                  subtitleFormat_,
-                                 D2D1::RectF(68.0f, static_cast<float>(rowY + 32),
-                                             static_cast<float>(listRect_.right - 170),
-                                             static_cast<float>(rowY + 58)),
+                                 D2D1::RectF(kTextLeft, subtitleTop, textRight,
+                                             subtitleTop + subtitleHeight + 1.0f),
                                  secondaryBrush_, D2D1_DRAW_TEXT_OPTIONS_CLIP);
         renderTarget_->DrawTextW(item.pluginName.c_str(), static_cast<UINT32>(item.pluginName.size()),
                                  pluginFormat_,
                                  D2D1::RectF(static_cast<float>(listRect_.right - 170),
-                                             static_cast<float>(rowY + 22),
+                                             rowMiddle - 16.0f,
                                              static_cast<float>(listRect_.right - 8),
-                                             static_cast<float>(rowY + 42)),
+                                             rowMiddle + 16.0f),
                                  secondaryBrush_, D2D1_DRAW_TEXT_OPTIONS_CLIP);
     }
 

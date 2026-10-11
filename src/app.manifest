@@ -4,7 +4,13 @@
   <trustInfo xmlns="urn:schemas-microsoft-com:asm.v3">
     <security>
       <requestedPrivileges xmlns="urn:schemas-microsoft-com:asm.v3">
-        <requestedExecutionLevel level="asInvoker" uiAccess="false" />
+        <!-- Indexing needs a raw volume handle: the USN journal (incremental
+             updates) and $MFT are only reachable from a high integrity
+             process, so the launcher always runs elevated. A Run-key autostart
+             would then prompt for UAC on every logon, so the app registers a
+             "highest privileges" scheduled task instead (see applyAutoStart in
+             settings.cpp). -->
+        <requestedExecutionLevel level="requireAdministrator" uiAccess="false" />
       </requestedPrivileges>
     </security>
   </trustInfo>
