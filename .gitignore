@@ -26,3 +26,6 @@ cpp/build/*
 Thumbs.db
 .DS_Store
 verify/out/
+
+# C++ verification binaries (cpp/verify/out is built by the verify scripts)
+cpp/verify/out/

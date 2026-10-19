@@ -37,6 +37,9 @@ publish\hotspot-cpp.exe   # 原生 PE32+ GUI x64
 - 多盘公平配额 + 相关度排序：**名字匹配优先于文件类型**（精确名/精确茎 >
   前缀 > 包含；同档内才比 exe/lnk > 文件 > 文件夹；短名优先），所以搜 `clock`
   时完全名为 `clock` 的文件夹排在 `Clock Widget.lnk` 之前
+- 不搜索 `AppData` 与隐藏项：`AppData` 目录下的文件、隐藏文件夹（连同全部内容）
+  和隐藏文件都不会出现在结果里，实时扫描也不进入这些目录；索引仍照旧记录它们，
+  所以索引文件格式不变、无需重建
 - 无边框、圆角、TopMost 启动器窗口（Direct2D 自绘结果列表）
 - 全局热键（默认 `Alt+Space`，可修改）
 - 托盘图标：左键显示启动器，右键 显示/设置/退出
@@ -90,6 +93,7 @@ hotspot/
     ├── path_query.{h,cpp}            # \ 触发的路径查询解析与匹配分级
     ├── file_rank.{h,cpp}             # 结果排序（名字模式 / 路径模式）
     ├── file_search.{h,cpp}           # fs/?/无前缀 + 路径搜索 + 实时兜底 + 历史
+    ├── search_filter.{h,cpp}         # 搜索过滤：AppData / 隐藏文件夹 / 隐藏文件
     ├── ui/
     │   ├── main_window.{h,cpp}       # Direct2D 启动器窗口
     │   ├── settings_window.{h,cpp}   # Win32 设置窗口
